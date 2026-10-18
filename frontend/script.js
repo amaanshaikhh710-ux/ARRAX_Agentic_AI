@@ -26,6 +26,10 @@
       help: "Runs a 200 ms bounded delay against a 50 ms tool budget to expose the timeout boundary.",
       fallback: "bounded timeout demo",
     },
+    workspace_report: {
+      help: "Requires an API configured with an explicit ARRAX_WORKSPACE_ROOT. Lists the approved workspace, pauses for approval, writes a bounded report, and verifies the real file.",
+      fallback: "approved workspace readiness report",
+    },
   };
 
   const STATUS_DETAILS = {
@@ -73,6 +77,7 @@
     healthReady: false,
     submitting: false,
     actionPending: false,
+    workspaceAvailable: false,
   };
 
   const elements = {};
@@ -243,6 +248,19 @@
 
   function renderCapabilities(capabilities) {
     const tools = Array.isArray(capabilities?.tools) ? capabilities.tools : [];
+    state.workspaceAvailable = tools.includes("workspace.list")
+      && tools.includes("workspace.create_report")
+      && tools.includes("workspace.verify_report");
+    const workspaceOption = elements.scenarioMode.querySelector('option[value="workspace_report"]');
+    if (workspaceOption) {
+      workspaceOption.disabled = !state.workspaceAvailable;
+      workspaceOption.title = state.workspaceAvailable
+        ? "Uses the explicitly configured approved workspace root."
+        : "Configure ARRAX_WORKSPACE_ROOT and restart the API to enable this mode.";
+      if (!state.workspaceAvailable && elements.scenarioMode.value === "workspace_report") {
+        elements.scenarioMode.value = "success";
+      }
+    }
     elements.toolList.replaceChildren();
     elements.toolCount.textContent = `${tools.length} registered`;
     elements.capabilityExecution.textContent = displayValue(capabilities?.execution_mode, "unavailable");
@@ -257,6 +275,11 @@
   }
 
   function renderCapabilitiesFailure(error) {
+    state.workspaceAvailable = false;
+    const workspaceOption = elements.scenarioMode.querySelector('option[value="workspace_report"]');
+    if (workspaceOption) {
+      workspaceOption.disabled = true;
+    }
     elements.toolList.replaceChildren();
     addText(elements.toolList, "li", "tool-empty", "Capabilities unavailable.");
     elements.toolCount.textContent = "Unavailable";
@@ -292,6 +315,9 @@
     }
     if (mode === "timeout") {
       return { type: mode, message: detail, seconds: 0.2, timeout_seconds: 0.05 };
+    }
+    if (mode === "workspace_report") {
+      return { type: mode, message: detail, overwrite: false };
     }
     return { type: mode, message: detail };
   }
@@ -495,6 +521,10 @@
     }
     if (state.task && !isTerminal(state.task.status)) {
       setFormStatus("Cancel or finish the monitored task before starting another run.");
+      return;
+    }
+    if (elements.scenarioMode.value === "workspace_report" && !state.workspaceAvailable) {
+      setFormStatus("Workspace reporting requires an API configured with ARRAX_WORKSPACE_ROOT.");
       return;
     }
 

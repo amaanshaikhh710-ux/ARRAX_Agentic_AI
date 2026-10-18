@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from .domain import DomainValidationError, PlanStep, RiskLevel
+from .workspace import REPORT_FILENAME
 
 
 class PlanningError(DomainValidationError):
@@ -20,6 +21,9 @@ def _required_string(data: Mapping[str, Any], key: str) -> str:
 
 class DeterministicPlanner:
     """Build plans without an AI provider or implicit tool selection."""
+
+    def __init__(self, *, workspace_enabled: bool = False) -> None:
+        self.workspace_enabled = workspace_enabled
 
     def plan(self, goal: Mapping[str, Any]) -> tuple[PlanStep, ...]:
         if not isinstance(goal, Mapping):
@@ -67,6 +71,10 @@ class DeterministicPlanner:
                     timeout_seconds=float(data.get("timeout_seconds", 0.05)),
                 ),
             )
+        if goal_type in {"workspace_report", "workspace_readiness_report"}:
+            if not self.workspace_enabled:
+                raise PlanningError("workspace_report requires an explicitly configured ARRAX_WORKSPACE_ROOT")
+            return self._workspace_report_steps(data)
         if goal_type in {"tool", "structured_action"}:
             return (self._structured_step(data, "structured-action"),)
         if goal_type in {"plan", "structured_plan"}:
@@ -82,6 +90,36 @@ class DeterministicPlanner:
                 raise PlanningError("every structured plan step must be an object")
             return steps
         raise PlanningError(f"unrecognized goal type: {goal_type}")
+
+    def _workspace_report_steps(self, data: Mapping[str, Any]) -> tuple[PlanStep, ...]:
+        report_path = data.get("path", data.get("report_path", REPORT_FILENAME))
+        if not isinstance(report_path, str) or not report_path.strip():
+            raise PlanningError("workspace_report path must be a non-empty string")
+        overwrite = data.get("overwrite", False)
+        if not isinstance(overwrite, bool):
+            raise PlanningError("workspace_report overwrite must be boolean")
+        return (
+            PlanStep(
+                step_id="workspace-snapshot",
+                name="Inspect the approved workspace snapshot",
+                tool_name="workspace.list",
+                input={"path": ".", "max_entries": 200},
+                risk=RiskLevel.READ_ONLY,
+                verifier_tool="workspace.verify_snapshot",
+                verification_input={"path": ".", "max_entries": 200},
+            ),
+            PlanStep(
+                step_id="workspace-report",
+                name="Create the ARRAX readiness report",
+                tool_name="workspace.create_report",
+                input={"path": report_path, "overwrite": overwrite},
+                dependencies=("workspace-snapshot",),
+                risk=RiskLevel.SENSITIVE,
+                approval_required=True,
+                verifier_tool="workspace.verify_report",
+                verification_input={"path": report_path},
+            ),
+        )
 
     def _success_step(self, data: Mapping[str, Any]) -> PlanStep:
         return PlanStep(

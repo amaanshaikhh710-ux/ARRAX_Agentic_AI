@@ -5,7 +5,10 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
+import os
 from typing import Any, Mapping, Protocol
+
+from .domain import RiskLevel
 
 
 class ToolError(Exception):
@@ -42,6 +45,7 @@ class ToolContext:
     cancellation_event: threading.Event
     stop_event: threading.Event
     deadline: float
+    approved: bool = False
 
     @property
     def cancelled(self) -> bool:
@@ -56,6 +60,7 @@ class Tool(Protocol):
     name: str
     default_timeout_seconds: float
     is_verifier: bool
+    risk_level: RiskLevel
 
     def validate_input(self, value: Mapping[str, Any]) -> None:
         """Raise ToolInputError if value is invalid."""
@@ -88,6 +93,7 @@ class FixtureSuccessTool:
     name = "fixture.success"
     default_timeout_seconds = 1.0
     is_verifier = False
+    risk_level = RiskLevel.READ_ONLY
 
     def validate_input(self, value: Mapping[str, Any]) -> None:
         data = _object(value, self.name)
@@ -113,6 +119,7 @@ class FixtureSuccessTool:
 
 class ApprovalRequiredTool(FixtureSuccessTool):
     name = "fixture.approval"
+    risk_level = RiskLevel.SENSITIVE
 
     def execute(self, value: Mapping[str, Any], context: ToolContext) -> ToolResult:
         result = super().execute(value, context)
@@ -125,6 +132,7 @@ class FailOnceTool:
     name = "fixture.fail_once"
     default_timeout_seconds = 1.0
     is_verifier = False
+    risk_level = RiskLevel.REVERSIBLE
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -152,6 +160,7 @@ class VerifyTool:
     name = "fixture.verify"
     default_timeout_seconds = 1.0
     is_verifier = True
+    risk_level = RiskLevel.READ_ONLY
 
     def validate_input(self, value: Mapping[str, Any]) -> None:
         data = _object(value, self.name)
@@ -178,6 +187,7 @@ class DelayTool:
     name = "fixture.delay"
     default_timeout_seconds = 1.0
     is_verifier = False
+    risk_level = RiskLevel.READ_ONLY
 
     def validate_input(self, value: Mapping[str, Any]) -> None:
         data = _object(value, self.name)
@@ -204,6 +214,7 @@ class ToolRegistry:
         if max_timeout_seconds <= 0:
             raise ValueError("max_timeout_seconds must be positive")
         self._tools: dict[str, Tool] = {}
+        self._risks: dict[str, RiskLevel] = {}
         self.max_timeout_seconds = float(max_timeout_seconds)
         for tool in tools or []:
             self.register(tool)
@@ -216,7 +227,17 @@ class ToolRegistry:
             raise ValueError(f"tool already registered: {name}")
         if not callable(getattr(tool, "validate_input", None)) or not callable(getattr(tool, "execute", None)):
             raise ValueError(f"tool {name!r} does not implement the tool protocol")
+        risk = getattr(tool, "risk_level", None)
+        try:
+            risk = risk if isinstance(risk, RiskLevel) else RiskLevel(risk)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"tool {name!r} must define valid risk metadata") from exc
+        if not isinstance(getattr(tool, "is_verifier", None), bool):
+            raise ValueError(f"tool {name!r} must define boolean verifier metadata")
+        if tool.is_verifier and risk is not RiskLevel.READ_ONLY:
+            raise ValueError(f"verifier tool {name!r} must be read-only")
         self._tools[name] = tool
+        self._risks[name] = risk
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._tools))
@@ -226,6 +247,12 @@ class ToolRegistry:
         if tool is None:
             raise UnknownToolError(f"unknown tool: {name}")
         return tool
+
+    def risk_for(self, name: str) -> RiskLevel:
+        """Return the registry-owned minimum risk for a tool."""
+
+        self.get(name)
+        return self._risks[name]
 
     def validate(self, name: str, value: Mapping[str, Any]) -> None:
         tool = self.get(name)
@@ -242,6 +269,8 @@ class ToolRegistry:
         value: Mapping[str, Any],
         cancellation_event: threading.Event,
         timeout_seconds: float | None = None,
+        *,
+        approved: bool = False,
     ) -> ToolExecution:
         """Validate, execute, and return without waiting past the deadline.
 
@@ -264,10 +293,13 @@ class ToolRegistry:
         timeout = min(float(configured), self.max_timeout_seconds)
         if cancellation_event.is_set():
             return ToolExecution(error="cancelled", cancelled=True)
+        risk = self._risks[name]
+        if risk in {RiskLevel.SENSITIVE, RiskLevel.DESTRUCTIVE} and not approved and not tool.is_verifier:
+            return ToolExecution(error="tool requires explicit approval")
 
         stop_event = threading.Event()
         deadline = time.monotonic() + timeout
-        context = ToolContext(cancellation_event, stop_event, deadline)
+        context = ToolContext(cancellation_event, stop_event, deadline, approved=approved)
         result_holder: list[ToolResult] = []
         error_holder: list[str] = []
 
@@ -301,15 +333,18 @@ class ToolRegistry:
         return ToolExecution(result=result_holder[0])
 
 
-def default_registry() -> ToolRegistry:
+def default_registry(workspace_root: str | os.PathLike[str] | None = None) -> ToolRegistry:
     """Create a fresh registry so fixture state is isolated per agent core."""
 
-    return ToolRegistry(
-        [
-            FixtureSuccessTool(),
-            ApprovalRequiredTool(),
-            FailOnceTool(),
-            VerifyTool(),
-            DelayTool(),
-        ]
-    )
+    tools: list[Tool] = [
+        FixtureSuccessTool(),
+        ApprovalRequiredTool(),
+        FailOnceTool(),
+        VerifyTool(),
+        DelayTool(),
+    ]
+    if workspace_root:
+        from .workspace import workspace_tools
+
+        tools.extend(workspace_tools(workspace_root))
+    return ToolRegistry(tools)

@@ -18,7 +18,10 @@ def main() -> None:
     if not 1 <= port <= 65535:
         raise SystemExit("ARRAX_PORT must be between 1 and 65535")
 
-    app = create_app(db_path=os.getenv("ARRAX_DB_PATH", "arrax.sqlite"))
+    app = create_app(
+        db_path=os.getenv("ARRAX_DB_PATH", "arrax.sqlite"),
+        workspace_root=os.getenv("ARRAX_WORKSPACE_ROOT"),
+    )
     app.run(host=host, port=port, debug=False, use_reloader=False)
 
 

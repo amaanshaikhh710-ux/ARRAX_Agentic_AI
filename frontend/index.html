@@ -100,6 +100,7 @@
                     <option value="failure_recovery">Self-healing recovery</option>
                     <option value="approval">Approval gate</option>
                     <option value="timeout">Timeout boundary</option>
+                    <option value="workspace_report" disabled>Workspace readiness report (requires ARRAX_WORKSPACE_ROOT)</option>
                   </select>
                   <p class="field-help" id="scenario-help">Runs fixture.success and requires fixture.verify evidence before completion.</p>
                 </div>
@@ -124,7 +125,7 @@
                 </div>
                 <h3>Transparent by construction.</h3>
                 <ul class="principle-list">
-                  <li><span class="list-marker" aria-hidden="true">+</span><span>Only registered fixture tools can execute.</span></li>
+                  <li><span class="list-marker" aria-hidden="true">+</span><span>Only registered tools can execute.</span></li>
                   <li><span class="list-marker" aria-hidden="true">+</span><span>Approval is explicit for sensitive work.</span></li>
                   <li><span class="list-marker" aria-hidden="true">+</span><span>Completion requires verification evidence.</span></li>
                   <li><span class="list-marker" aria-hidden="true">+</span><span>Every event is read from persisted history.</span></li>
@@ -267,7 +268,7 @@
                 <p class="eyebrow">Current limitations</p>
                 <h3>Local and deterministic by design.</h3>
               </div>
-              <p>No authentication, external provider, desktop automation, unrestricted shell/filesystem access, or production deployment is included in this milestone.</p>
+              <p>No authentication, external provider, desktop automation, unrestricted shell/filesystem access, or production deployment is included. The workspace report mode appears only when the API explicitly exposes an approved ARRAX_WORKSPACE_ROOT.</p>
             </div>
           </section>
         </main>

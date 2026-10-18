@@ -19,6 +19,7 @@ from .tools import (
     VerifyTool,
     default_registry,
 )
+from .workspace import REPORT_FILENAME, REPORT_MARKER, workspace_tools
 
 __all__ = [
     "AgentCore",
@@ -33,6 +34,8 @@ __all__ = [
     "PlanStep",
     "PlanningError",
     "RiskLevel",
+    "REPORT_FILENAME",
+    "REPORT_MARKER",
     "SQLiteStore",
     "Task",
     "TaskNotFoundError",
@@ -46,4 +49,5 @@ __all__ = [
     "VerifyTool",
     "create_default_core",
     "default_registry",
+    "workspace_tools",
 ]

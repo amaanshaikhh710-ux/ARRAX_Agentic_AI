@@ -11,6 +11,7 @@ from .domain import PlanStep, RiskLevel, Task, TaskStatus
 from .planner import DeterministicPlanner, PlanningError
 from .storage import Event, SQLiteStore, utc_now
 from .tools import ToolInputError, ToolRegistry, UnknownToolError, default_registry
+from .workspace import normalize_workspace_root
 
 
 class TaskNotFoundError(KeyError):
@@ -36,10 +37,14 @@ class AgentCore:
         registry: ToolRegistry | None = None,
         planner: DeterministicPlanner | None = None,
         max_timeout_seconds: float = 10.0,
+        workspace_root: str | None = None,
     ) -> None:
         self.store = store or SQLiteStore(db_path)
-        self.registry = registry or default_registry()
-        self.planner = planner or DeterministicPlanner()
+        self.workspace_root = normalize_workspace_root(workspace_root)
+        self.registry = registry or default_registry(self.workspace_root)
+        if self.workspace_root is None and any(name.startswith("workspace.") for name in self.registry.names()):
+            raise ValueError("workspace tools require an explicitly configured workspace_root")
+        self.planner = planner or DeterministicPlanner(workspace_enabled=self.workspace_root is not None)
         self.max_timeout_seconds = max_timeout_seconds
         self._active_lock = threading.RLock()
         self._active_tokens: dict[str, CancellationToken] = {}
@@ -56,10 +61,29 @@ class AgentCore:
         try:
             task = task.with_updates(status=TaskStatus.PLANNING)
             task = self._save_task(task, "task.planning")
+            goal_type = task.goal.get("type", task.goal.get("kind"))
+            if isinstance(goal_type, str) and goal_type.strip().lower() in {
+                "workspace_report",
+                "workspace_readiness_report",
+            } and self.workspace_root is None:
+                raise PlanningError("workspace_report requires an explicitly configured ARRAX_WORKSPACE_ROOT")
             plan = self.planner.plan(task.goal)
             task = task.with_updates(plan=plan, status=TaskStatus.QUEUED, error=None)
             self.store.steps.replace_for_task(task.task_id, plan)
             task = self._save_task(task, "plan.created", {"step_count": len(plan)})
+            if isinstance(goal_type, str) and goal_type.strip().lower() in {
+                "workspace_report",
+                "workspace_readiness_report",
+            }:
+                required_workspace_tools = {
+                    "workspace.list",
+                    "workspace.create_report",
+                    "workspace.verify_snapshot",
+                    "workspace.verify_report",
+                }
+                missing_workspace_tools = required_workspace_tools - set(self.registry.names())
+                if missing_workspace_tools:
+                    raise PlanningError("workspace_report requires all workspace tools to be available")
             self._validate_plan_references(task)
             return task
         except Exception as exc:
@@ -127,11 +151,21 @@ class AgentCore:
             token = self._active_tokens.get(task_id)
         if token is not None:
             token.cancel()
+        # Re-read after signalling the worker.  Saving the stale task loaded
+        # above can otherwise race the worker's terminal cancellation update
+        # and write RUNNING back over a completed cancellation.
+        task = self._get_task(task_id)
+        if task.status.terminal:
+            return task
         task = task.with_updates(cancellation_requested=True)
         if token is None:
             task = self._save_task(task, "task.cancel_requested", {})
             return self._cancel(task, "cancelled by caller")
-        return self._save_task(task, "task.cancel_requested", {})
+        self._save_task(task, "task.cancel_requested", {})
+        latest = self._get_task(task_id)
+        if latest.status.terminal:
+            return latest
+        return self._cancel(latest, "cancelled by caller")
 
     def get_task(self, task_id: str) -> Task:
         return self._get_task(task_id)
@@ -257,6 +291,7 @@ class AgentCore:
                     current.input,
                     token.event,
                     timeout_seconds=min(current.timeout_seconds, self.max_timeout_seconds),
+                    approved=current.approved,
                 )
             except UnknownToolError as exc:
                 self._event(task.task_id, "tool.rejected", {"error_type": "unknown_tool", "error": str(exc)}, current.step_id)
@@ -365,7 +400,12 @@ class AgentCore:
             stop.wait(0.01)
 
     def _requires_approval(self, step: PlanStep) -> bool:
-        return step.approval_required or step.risk in {RiskLevel.SENSITIVE, RiskLevel.DESTRUCTIVE}
+        required_risk = step.risk
+        try:
+            required_risk = self.registry.risk_for(step.tool_name)
+        except UnknownToolError:
+            pass
+        return step.approval_required or required_risk in {RiskLevel.SENSITIVE, RiskLevel.DESTRUCTIVE}
 
     def _validate_plan_references(self, task: Task) -> None:
         ids = {step.step_id for step in task.plan}
@@ -375,6 +415,23 @@ class AgentCore:
                 raise PlanningError(f"step {step.step_id!r} has missing dependencies: {sorted(missing)}")
             if step.step_id in step.dependencies:
                 raise PlanningError(f"step {step.step_id!r} depends on itself")
+            try:
+                required_risk = self.registry.risk_for(step.tool_name)
+            except UnknownToolError:
+                continue
+            if self._risk_rank(step.risk) < self._risk_rank(required_risk):
+                raise PlanningError(
+                    f"step {step.step_id!r} risk {step.risk.value} is below the tool minimum {required_risk.value}"
+                )
+
+    @staticmethod
+    def _risk_rank(risk: RiskLevel) -> int:
+        return {
+            RiskLevel.READ_ONLY: 0,
+            RiskLevel.REVERSIBLE: 1,
+            RiskLevel.SENSITIVE: 2,
+            RiskLevel.DESTRUCTIVE: 3,
+        }[risk]
 
     def _step_by_id(self, steps: list[PlanStep], step_id: str) -> PlanStep:
         for step in steps:
@@ -447,7 +504,7 @@ class AgentCore:
         return exc.__class__.__name__
 
 
-def create_default_core(db_path: str = ":memory:") -> AgentCore:
+def create_default_core(db_path: str = ":memory:", *, workspace_root: str | None = None) -> AgentCore:
     """Convenience factory for the public offline API."""
 
-    return AgentCore(db_path=db_path)
+    return AgentCore(db_path=db_path, workspace_root=workspace_root)

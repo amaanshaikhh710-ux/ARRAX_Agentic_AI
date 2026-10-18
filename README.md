@@ -4,7 +4,7 @@
 
 ## Project status
 
-Milestones 1 through 3 are implemented as a small, offline deterministic agent core with a Flask API boundary and a server-served vanilla dashboard. The destination repository contains the task model, planner, allowlisted fixture tools, orchestrator, SQLite persistence, bounded local workers, frontend, and pytest coverage described below.
+Milestones 1 through 4 are implemented as a small, offline deterministic agent core with a Flask API boundary and a server-served vanilla dashboard. The destination repository contains the task model, planner, allowlisted fixture tools, opt-in bounded workspace tools, orchestrator, SQLite persistence, bounded local workers, frontend, and pytest coverage described below.
 
 The application is intentionally being built as a fresh implementation. Completed work is marked explicitly as it is added and verified.
 
@@ -45,6 +45,8 @@ Currently implemented:
 - Bounded asynchronous task workers with an explicit application shutdown hook for tests and embedding code.
 - Responsive HTML/CSS/vanilla JavaScript dashboard served by the Flask factory, connected to the real health, capabilities, task, event, approval, and cancellation endpoints.
 - Safe DOM rendering for user and API text, persisted event timeline, plan-step evidence, approval controls, cancellation, and API/provider availability states.
+- Opt-in workspace tools for bounded listing, UTF-8 text reading, text search, deterministic readiness-report creation, and actual-file verification. They are absent from the registry unless `ARRAX_WORKSPACE_ROOT` or an explicit workspace-root argument is configured.
+- A deterministic `workspace_report` goal that snapshots the approved root, pauses before the sensitive report write, then verifies the generated file from disk.
 
 Not yet implemented:
 
@@ -100,7 +102,8 @@ ARRAX_Agentic_AI/
 ├── src/arrax/
 │   ├── domain.py          # task, plan, risk, and status contracts
 │   ├── planner.py         # deterministic structured-goal planner
-│   ├── tools.py           # allowlisted protocol and safe fixtures
+│   ├── tools.py           # allowlisted protocol, risk metadata, and safe fixtures
+│   ├── workspace.py       # opt-in root-scoped workspace tools and verifiers
 │   ├── storage.py         # SQLite repositories and schema
 │   ├── orchestrator.py    # synchronous lifecycle and policy flow
 │   └── api.py             # Flask factory, serialization, workers, and dashboard serving
@@ -172,6 +175,46 @@ app = create_app(db_path="arrax.sqlite")
 
 The factory does not bind a socket or create network clients. Its default mode is local and deterministic, and its default request body limit is 64 KiB. Tests can inject an existing `AgentCore` with `create_app(core=core)` and use the same shutdown hook to wait for bounded workers.
 
+### Optional workspace capability
+
+Workspace access is disabled by default. To enable it, configure one existing
+directory explicitly when constructing the core or Flask app:
+
+```python
+from pathlib import Path
+
+from arrax import AgentCore, create_app
+
+core = AgentCore(db_path="arrax.sqlite", workspace_root=Path(".").resolve())
+app = create_app(core=core)
+```
+
+The factory also accepts `workspace_root="C:/approved/project"`, reads the
+`ARRAX_WORKSPACE_ROOT` app configuration value, or reads the
+`ARRAX_WORKSPACE_ROOT` environment variable. The safe module entry point passes
+that environment variable through:
+
+PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:ARRAX_WORKSPACE_ROOT = (Get-Location).Path
+python -m arrax
+```
+
+An unset or blank value leaves the application fixture-only. The configured
+root must already exist, be a directory, and not itself be a symlink. The API
+capability response lists the workspace tools only when they are actually
+registered; it never returns the absolute root.
+
+The dashboard's **Workspace readiness report** scenario is disabled until the
+capability response contains the workspace tools. When enabled, it submits the
+real structured `workspace_report` goal. The task first runs a read-only
+snapshot, pauses at an explicit sensitive approval gate, writes
+`ARRAX_READINESS_REPORT.md` inside the approved root, and verifies the actual
+file and marker. A report path that already exists is rejected unless the goal
+explicitly requests overwrite and the plan is approved.
+
 To run the local dashboard with Flask's development server, keep the binding
 local and use an explicit non-debug command:
 
@@ -206,9 +249,9 @@ Commands will be tested from a clean checkout before they are documented as work
 
 ## Environment variables
 
-The `.env.example` file is present as a safe template. Milestone 1 consumes no environment variables and stores no credentials or secrets.
+The `.env.example` file is present as a safe template. The default mode consumes no workspace environment variable and stores no credentials or secrets.
 
-Future integrations will expose only documented variable names in `.env.example`. Real API keys, passwords, tokens, personal data, and machine-specific paths must remain outside Git.
+Future integrations will expose only documented variable names in `.env.example`. The optional `ARRAX_WORKSPACE_ROOT` value is intentionally blank in that template. Real API keys, passwords, tokens, personal data, and machine-specific paths must remain outside Git.
 
 ## Database and memory
 
@@ -226,7 +269,7 @@ The project does not claim MySQL compatibility; SQLite is the deliberate local p
 
 ## Running the application
 
-Milestone 3 adds the local dashboard on top of the Flask API but no desktop runtime or production deployment. Use the application factory shown above, then run the offline test suite.
+Milestone 4 adds the opt-in workspace report flow on top of the local dashboard. Use the application factory shown above, configure an approved root when the real report demo is desired, then run the offline test suite.
 
 The default development mode is expected to be local-only and safe. Network exposure, authentication, and any platform-specific adapters will be addressed explicitly rather than enabled by default.
 
@@ -256,6 +299,8 @@ The target is one offline command that exercises the complete safe test suite, i
 - Timeout and cancellation behavior.
 - Result verification.
 - persistence and event-history reloads.
+- Workspace path containment, symlink rejection, bounded text I/O, safe report
+  writes, actual-file verification, risk floors, and opt-in API capabilities.
 
 Tests must never perform real shutdowns, restarts, destructive filesystem operations, unrestricted shell commands, or real messages.
 
@@ -273,6 +318,26 @@ The implemented core security model is:
 - Render user-generated content safely in the frontend.
 - Make external AI and desktop integrations optional and mockable.
 
+The workspace boundary adds these controls:
+
+- No workspace tool is registered without an explicit root.
+- Absolute paths, drive-qualified paths, parent traversal, missing parents,
+  symlinks, symlink directories, non-regular files, and paths outside the
+  resolved root are rejected.
+- Reads and searches have strict input, file, file-count, result-count, and
+  byte limits. Text reads require valid bounded UTF-8 and reject binary-like
+  content.
+- Search and list results contain relative paths only. Reports contain a
+  deterministic snapshot of relative entries and sizes, never the absolute
+  root.
+- Report writes use a same-directory temporary file and atomic destination
+  creation/replacement. Existing files are not overwritten by default, and
+  overwrite requires both an explicit input and an approved sensitive plan.
+- `workspace.verify_report` and `workspace.verify_snapshot` recompute evidence
+  from the actual workspace instead of trusting a caller's `verified` field.
+- Registry risk metadata is authoritative: a structured plan cannot relabel a
+  sensitive workspace writer as `read_only`, and verifiers must be read-only.
+
 This project will not claim that a tool is successful until its completion can be verified. A safety policy is not a replacement for operating-system security, authentication, backups, or user review.
 
 ## Known issues and limitations
@@ -283,6 +348,14 @@ The current known limitations are:
 - No AI provider is connected.
 - Natural-language goal interpretation is deferred; the dashboard selects one of the implemented deterministic scenarios.
 - No desktop automation adapter is available.
+- Workspace access is opt-in and local-only; it does not provide arbitrary
+  filesystem access, recursive unbounded reads, shell execution, network
+  access, or a general-purpose file server.
+- Workspace snapshots are bounded. Very large trees, oversized files, binary
+  files, symlinks, and unsupported filesystem entries fail safely instead of
+  being partially trusted.
+- The readiness report is deterministic for a stable workspace, but it is not
+  a backup, security scan, or proof that files are safe to execute.
 - No authentication or production deployment is supported.
 - The final supported platform has not yet been validated.
 - No Dockerfile or Docker validation exists yet.
@@ -295,10 +368,11 @@ These items will be removed from this list only after implementation and verific
 2. Implement a minimal task lifecycle with deterministic test tools. **Complete.**
 3. Add the API boundary and safe execution-status responses. **Complete.**
 4. Add a small dashboard for task input, plan review, approval, and results. **Complete.**
-5. Add cancellation, timeouts, and result verification. **Core behavior complete; application surfaces remain.**
-6. Add optional AI planning behind strict schema and permission validation.
-7. Add optional platform adapters only after the core workflow is tested.
-8. Validate the project in a clean Docker environment with network access disabled for tests.
+5. Add cancellation, timeouts, and result verification. **Complete.**
+6. Add an opt-in bounded workspace report flow with actual verifiers. **Complete.**
+7. Add optional AI planning behind strict schema and permission validation.
+8. Add optional platform adapters only after the core workflow is tested.
+9. Validate the project in a clean Docker environment with network access disabled for tests.
 
 ## Contribution guidance
 

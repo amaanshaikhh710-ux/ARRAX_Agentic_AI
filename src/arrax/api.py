@@ -11,6 +11,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import math
+import os
 from pathlib import Path
 import threading
 from collections.abc import Mapping
@@ -23,6 +24,7 @@ from .domain import DomainValidationError, PlanStep, Task, TaskStatus
 from .orchestrator import AgentCore, TaskNotFoundError
 from .planner import PlanningError
 from .storage import Event
+from .workspace import normalize_workspace_root
 
 
 DEFAULT_MAX_CONTENT_LENGTH = 64 * 1024
@@ -302,13 +304,16 @@ def create_app(
     core: AgentCore | None = None,
     *,
     db_path: str | None = None,
+    workspace_root: str | os.PathLike[str] | None = None,
     config: Mapping[str, Any] | None = None,
 ) -> Flask:
     """Create the local deterministic Flask application.
 
     ``core`` is injectable for isolated tests.  Without one, the factory
     creates an ``AgentCore`` backed by ``ARRAX_DB_PATH`` (or ``db_path`` and
-    ultimately an in-memory SQLite database).  No server is started here.
+    ultimately an in-memory SQLite database).  An optional workspace root is
+    passed to that core; without it, only fixture tools are registered. No
+    server is started here.
     Call ``app.extensions["arrax"]["shutdown"]()`` or
     ``app.extensions["arrax_worker_manager"].shutdown()`` when the app is no
     longer needed.
@@ -318,6 +323,7 @@ def create_app(
     app.config.from_mapping(
         MAX_CONTENT_LENGTH=DEFAULT_MAX_CONTENT_LENGTH,
         ARRAX_DB_PATH=db_path or ":memory:",
+        ARRAX_WORKSPACE_ROOT=None,
         ARRAX_MAX_WORKERS=DEFAULT_MAX_WORKERS,
         ARRAX_MAX_QUEUE=DEFAULT_MAX_QUEUE,
     )
@@ -326,9 +332,21 @@ def create_app(
     if app.config.get("MAX_CONTENT_LENGTH") is None or app.config["MAX_CONTENT_LENGTH"] <= 0:
         raise ValueError("MAX_CONTENT_LENGTH must be a positive integer")
 
+    configured_workspace_root = workspace_root
+    if configured_workspace_root is None:
+        configured_workspace_root = app.config.get("ARRAX_WORKSPACE_ROOT")
+    if configured_workspace_root is None:
+        configured_workspace_root = os.getenv("ARRAX_WORKSPACE_ROOT")
+    configured_workspace_root = normalize_workspace_root(configured_workspace_root)
+
     owns_core = core is None
     if core is None:
-        core = AgentCore(db_path=str(app.config["ARRAX_DB_PATH"]))
+        core = AgentCore(
+            db_path=str(app.config["ARRAX_DB_PATH"]),
+            workspace_root=configured_workspace_root,
+        )
+    elif configured_workspace_root is not None and getattr(core, "workspace_root", None) is None:
+        raise ValueError("workspace_root must be configured on an injected AgentCore")
     manager = TaskWorkerManager(
         core,
         max_workers=app.config["ARRAX_MAX_WORKERS"],
@@ -423,13 +441,14 @@ def create_app(
 
     @app.get("/api/capabilities")
     def capabilities():
-        return jsonify(
-            {
-                "tools": list(core.registry.names()),
-                "execution_mode": "deterministic_local",
-                "provider_mode": "none",
-            }
-        )
+        payload = {
+            "tools": list(core.registry.names()),
+            "execution_mode": "deterministic_local",
+            "provider_mode": "none",
+        }
+        if getattr(core, "workspace_root", None) is not None:
+            payload["workspace_enabled"] = True
+        return jsonify(payload)
 
     @app.post("/api/tasks")
     def create_task():
