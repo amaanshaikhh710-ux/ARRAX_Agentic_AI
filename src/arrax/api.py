@@ -25,7 +25,17 @@ from .evaluation import EvaluationError, UnknownScenarioError, run_evaluation, s
 from .orchestrator import AgentCore, TaskNotFoundError
 from .planner import PlanningError
 from .provider import ProviderConfig, ProviderConfigError
-from .storage import Event
+from .services import (
+    MemoryNotFoundError,
+    MemoryService,
+    MemoryValidationError,
+    WorkflowConflictError,
+    WorkflowNotFoundError,
+    WorkflowService,
+    WorkflowValidationError,
+)
+from .storage import Event, MemoryRecord, Workflow
+from .system import SystemSnapshotService
 from .workspace import normalize_workspace_root
 
 
@@ -219,6 +229,33 @@ def serialize_event(event: Event) -> dict[str, Any]:
     }
 
 
+def serialize_workflow(workflow: Workflow) -> dict[str, Any]:
+    """Return the public workflow document without storage internals."""
+
+    return {
+        "id": workflow.id,
+        "name": workflow.name,
+        "description": workflow.description,
+        "goal": dict(workflow.goal),
+        "version": workflow.version,
+        "created_at": workflow.created_at,
+        "updated_at": workflow.updated_at,
+    }
+
+
+def serialize_memory(record: MemoryRecord) -> dict[str, Any]:
+    """Return a JSON-safe public memory record."""
+
+    return {
+        "id": record.id,
+        "key": record.key,
+        "value": record.value,
+        "category": record.category,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
 def _error_response(code: str, message: str, status_code: int):
     return jsonify({"error": {"code": code, "message": message}}), status_code
 
@@ -310,6 +347,7 @@ def create_app(
     planner: Any | None = None,
     provider: Any | None = None,
     config: Mapping[str, Any] | None = None,
+    system_service: Any | None = None,
 ) -> Flask:
     """Create the local Flask application without verifying a provider.
 
@@ -333,6 +371,9 @@ def create_app(
         GEMINI_MODEL=os.getenv("GEMINI_MODEL"),
         ARRAX_MAX_WORKERS=DEFAULT_MAX_WORKERS,
         ARRAX_MAX_QUEUE=DEFAULT_MAX_QUEUE,
+        ARRAX_SYSTEM_DISK_PATH=None,
+        ARRAX_SYSTEM_PROCESS_LIMIT=5,
+        ARRAX_SYSTEM_PROCESS_SCAN_LIMIT=50,
     )
     if config:
         app.config.update(config)
@@ -365,6 +406,19 @@ def create_app(
         )
     elif configured_workspace_root is not None and getattr(core, "workspace_root", None) is None:
         raise ValueError("workspace_root must be configured on an injected AgentCore")
+    if system_service is None:
+        system_service = app.config.get("ARRAX_SYSTEM_SERVICE")
+    if system_service is None:
+        system_disk_path = app.config.get("ARRAX_SYSTEM_DISK_PATH")
+        if system_disk_path is None:
+            system_disk_path = os.getenv("ARRAX_SYSTEM_DISK_PATH")
+        system_service = SystemSnapshotService(
+            disk_path=system_disk_path,
+            process_limit=app.config["ARRAX_SYSTEM_PROCESS_LIMIT"],
+            process_scan_limit=app.config["ARRAX_SYSTEM_PROCESS_SCAN_LIMIT"],
+        )
+    workflow_service = WorkflowService(core.store, core)
+    memory_service = MemoryService(core.store)
     manager = TaskWorkerManager(
         core,
         max_workers=app.config["ARRAX_MAX_WORKERS"],
@@ -392,6 +446,9 @@ def create_app(
         "shutdown": shutdown,
         "owns_core": owns_core,
         "provider_status": lambda: core.provider_status,
+        "system_service": system_service,
+        "workflow_service": workflow_service,
+        "memory_service": memory_service,
     }
 
     @app.errorhandler(APIError)
@@ -474,6 +531,132 @@ def create_app(
         if getattr(core, "workspace_root", None) is not None:
             payload["workspace_enabled"] = True
         return jsonify(payload)
+
+    @app.get("/api/system/snapshot")
+    def system_snapshot():
+        """Return one bounded, capability-aware local system observation."""
+
+        return jsonify(system_service.snapshot())
+
+    @app.get("/api/system/capabilities")
+    def system_capabilities():
+        """Return system metric support without collecting machine details."""
+
+        return jsonify(system_service.capabilities())
+
+    @app.get("/api/workflows")
+    def list_workflows():
+        """List persisted reusable workflows without running them."""
+
+        return jsonify({"workflows": [serialize_workflow(item) for item in workflow_service.list()]})
+
+    @app.post("/api/workflows")
+    def create_workflow():
+        payload = _json_object()
+        unknown = set(payload) - {"name", "description", "goal", "version"}
+        if unknown:
+            raise APIError("invalid_request", "request contains unsupported fields", 400)
+        missing = [field for field in ("name", "description", "goal") if field not in payload]
+        if missing:
+            raise APIError("missing_workflow_field", "workflow name, description, and goal are required", 400)
+        try:
+            workflow = workflow_service.create(
+                name=payload["name"],
+                description=payload["description"],
+                goal=payload["goal"],
+                version=payload.get("version", 1),
+            )
+        except WorkflowConflictError as exc:
+            raise APIError("workflow_name_conflict", str(exc), 409) from exc
+        except WorkflowValidationError as exc:
+            raise APIError(exc.code, exc.message, 400) from exc
+        except Exception as exc:
+            raise APIError("internal_error", "workflow could not be saved", 500) from exc
+        return jsonify(serialize_workflow(workflow)), 201
+
+    @app.get("/api/workflows/<workflow_id>")
+    def get_workflow(workflow_id: str):
+        try:
+            workflow = workflow_service.get(workflow_id)
+        except WorkflowNotFoundError as exc:
+            raise APIError("workflow_not_found", "workflow was not found", 404) from exc
+        return jsonify(serialize_workflow(workflow))
+
+    @app.delete("/api/workflows/<workflow_id>")
+    def delete_workflow(workflow_id: str):
+        try:
+            workflow_service.delete(workflow_id)
+        except WorkflowNotFoundError as exc:
+            raise APIError("workflow_not_found", "workflow was not found", 404) from exc
+        return jsonify({"deleted": True, "id": workflow_id})
+
+    @app.post("/api/workflows/<workflow_id>/run")
+    def run_workflow(workflow_id: str):
+        payload = _json_object(allow_empty=True)
+        if payload:
+            raise APIError("invalid_request", "workflow run does not accept fields", 400)
+        try:
+            workflow = workflow_service.get(workflow_id)
+        except WorkflowNotFoundError as exc:
+            raise APIError("workflow_not_found", "workflow was not found", 404) from exc
+        try:
+            # A run creates a normal persisted AgentCore task. Saving a
+            # workflow only validates its plan and never reaches execution.
+            task = core.create_task(workflow.goal)
+        except (DomainValidationError, PlanningError) as exc:
+            raise APIError("workflow_run_failed", "workflow could not be converted into a task", 500) from exc
+        except Exception as exc:
+            raise APIError("internal_error", "workflow could not be run", 500) from exc
+        if task.status.terminal:
+            return _task_response(task, 201)
+        try:
+            started = manager.start(task.task_id)
+        except WorkerCapacityError as exc:
+            raise APIError("worker_capacity", "execution queue is full", 409) from exc
+        except WorkerShutdownError as exc:
+            raise APIError("worker_shutdown", "execution workers are unavailable", 409) from exc
+        return _task_response(core.get_task(task.task_id), 202 if started or not task.status.terminal else 200)
+
+    @app.get("/api/memory")
+    def list_memory():
+        """List only validated, JSON-safe user memory records."""
+
+        return jsonify({"memory": [serialize_memory(item) for item in memory_service.list()]})
+
+    @app.post("/api/memory")
+    def save_memory():
+        payload = _json_object()
+        unknown = set(payload) - {"key", "value", "category"}
+        if unknown:
+            raise APIError("invalid_request", "request contains unsupported fields", 400)
+        if "key" not in payload or "value" not in payload:
+            raise APIError("missing_memory_field", "memory key and value are required", 400)
+        try:
+            record, created = memory_service.upsert(
+                key=payload["key"],
+                value=payload["value"],
+                category=payload.get("category", "general"),
+            )
+        except MemoryValidationError as exc:
+            raise APIError(exc.code, exc.message, 400) from exc
+        except Exception as exc:
+            raise APIError("internal_error", "memory could not be saved", 500) from exc
+        return jsonify(serialize_memory(record)), 201 if created else 200
+
+    @app.delete("/api/memory/<memory_id>")
+    def delete_memory(memory_id: str):
+        try:
+            memory_service.delete(memory_id)
+        except MemoryNotFoundError as exc:
+            raise APIError("memory_not_found", "memory record was not found", 404) from exc
+        return jsonify({"deleted": True, "id": memory_id})
+
+    @app.post("/api/memory/reset")
+    def reset_memory():
+        payload = _json_object(allow_empty=True)
+        if payload:
+            raise APIError("invalid_request", "memory reset does not accept fields", 400)
+        return jsonify({"deleted": memory_service.reset()})
 
     @app.get("/api/provider/status")
     def provider_status():
@@ -625,6 +808,8 @@ __all__ = [
     "TaskWorkerManager",
     "create_app",
     "serialize_event",
+    "serialize_memory",
     "serialize_step",
     "serialize_task",
+    "serialize_workflow",
 ]

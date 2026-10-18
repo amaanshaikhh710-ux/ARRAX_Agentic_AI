@@ -155,6 +155,37 @@ class AgentCore:
             self._save_task(task, "task.failed", {"phase": "planning", "error": error})
             return task
 
+    def validate_deterministic_goal(self, goal: Mapping[str, Any]) -> tuple[PlanStep, ...]:
+        """Validate a reusable goal without creating or running a task.
+
+        Workflow persistence must not execute tools or create task history.  It
+        still needs the same deterministic planner, registry allowlist, risk
+        floors, and verifier contract that a task will use later, so this
+        method performs those checks against an in-memory task value only.
+        """
+
+        if not isinstance(goal, Mapping):
+            raise PlanningError("goal must be an object")
+        planner = DeterministicPlanner(workspace_enabled=self.workspace_root is not None)
+        plan = planner.plan(goal)
+        validation_task = Task(task_id="workflow-validation", goal=dict(goal), plan=plan)
+        self._validate_plan_references(validation_task)
+        for step in plan:
+            try:
+                self.registry.validate(step.tool_name, step.input)
+                verifier = self.registry.get(step.verifier_tool)
+            except (UnknownToolError, ToolInputError) as exc:
+                raise PlanningError("workflow goal references an unavailable tool") from exc
+            if not getattr(verifier, "is_verifier", False):
+                raise PlanningError("workflow goal references an invalid verifier")
+            verification_input = dict(step.verification_input or {})
+            verification_input["action_output"] = {}
+            try:
+                self.registry.validate(step.verifier_tool, verification_input)
+            except (UnknownToolError, ToolInputError) as exc:
+                raise PlanningError("workflow goal references an invalid verifier") from exc
+        return plan
+
     def run_task(self, task_id: str) -> Task:
         """Run one task synchronously until terminal or approval boundary."""
 

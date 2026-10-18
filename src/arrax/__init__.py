@@ -22,7 +22,19 @@ from .provider import (
     StructuredProviderPlanner,
     UrllibTransport,
 )
-from .storage import Event, SQLiteStore
+from .services import (
+    MemoryNotFoundError,
+    MemorySecretError,
+    MemoryService,
+    MemoryValidationError,
+    WorkflowConflictError,
+    WorkflowNotFoundError,
+    WorkflowService,
+    WorkflowValidationError,
+    WORKFLOW_VERSION,
+)
+from .storage import Event, MemoryRecord, MemoryRepository, SQLiteStore, Workflow, WorkflowRepository
+from .system import SystemService, SystemSnapshotService
 from .tools import (
     ApprovalRequiredTool,
     DelayTool,
@@ -57,6 +69,12 @@ __all__ = [
     "GeminiProvider",
     "HybridPlanner",
     "HttpResponse",
+    "MemoryNotFoundError",
+    "MemoryRecord",
+    "MemoryRepository",
+    "MemorySecretError",
+    "MemoryService",
+    "MemoryValidationError",
     "ModelInfo",
     "PlanStep",
     "PlanningError",
@@ -70,6 +88,8 @@ __all__ = [
     "REPORT_FILENAME",
     "REPORT_MARKER",
     "SQLiteStore",
+    "SystemService",
+    "SystemSnapshotService",
     "Task",
     "TaskNotFoundError",
     "TaskStatus",
@@ -81,6 +101,13 @@ __all__ = [
     "UnknownToolError",
     "UnknownScenarioError",
     "VerifyTool",
+    "Workflow",
+    "WorkflowConflictError",
+    "WorkflowNotFoundError",
+    "WorkflowRepository",
+    "WorkflowService",
+    "WorkflowValidationError",
+    "WORKFLOW_VERSION",
     "StructuredProviderPlanner",
     "UrllibTransport",
     "create_default_core",

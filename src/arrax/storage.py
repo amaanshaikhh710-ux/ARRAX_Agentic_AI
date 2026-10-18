@@ -35,6 +35,43 @@ class Event:
     created_at: str
 
 
+@dataclass(frozen=True)
+class Workflow:
+    """A reusable, validated structured goal."""
+
+    id: str
+    name: str
+    description: str
+    goal: dict[str, Any]
+    created_at: str | None = None
+    updated_at: str | None = None
+    version: int = 1
+
+    @property
+    def workflow_id(self) -> str:
+        """Compatibility alias for callers that use the domain name."""
+
+        return self.id
+
+
+@dataclass(frozen=True)
+class MemoryRecord:
+    """A user-controlled JSON-safe memory record."""
+
+    id: str
+    key: str
+    value: Any
+    category: str
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @property
+    def memory_id(self) -> str:
+        """Compatibility alias for callers that use the domain name."""
+
+        return self.id
+
+
 class SQLiteStore:
     """Own one SQLite connection and expose task, step, and event repositories."""
 
@@ -47,6 +84,8 @@ class SQLiteStore:
         self.tasks = TaskRepository(self)
         self.steps = StepRepository(self)
         self.events = EventRepository(self)
+        self.workflows = WorkflowRepository(self)
+        self.memory = MemoryRepository(self)
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -107,6 +146,25 @@ class SQLiteStore:
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS events_task_id_idx ON events(task_id, event_id);
+                CREATE TABLE IF NOT EXISTS workflows (
+                    workflow_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT NOT NULL,
+                    goal_json TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS workflows_updated_at_idx ON workflows(updated_at, workflow_id);
+                CREATE TABLE IF NOT EXISTS memory_records (
+                    memory_id TEXT PRIMARY KEY,
+                    memory_key TEXT NOT NULL UNIQUE,
+                    value_json TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS memory_records_updated_at_idx ON memory_records(updated_at, memory_id);
                 """
             )
 
@@ -312,3 +370,191 @@ class EventRepository:
             )
             for row in rows
         ]
+
+
+class WorkflowRepository:
+    """Transactional persistence for reusable workflows."""
+
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def create(self, workflow: Workflow) -> Workflow:
+        created_at = workflow.created_at or utc_now()
+        updated_at = workflow.updated_at or created_at
+        with self.store.transaction() as conn:
+            conn.execute(
+                """INSERT INTO workflows
+                (workflow_id, name, description, goal_json, version, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    workflow.id,
+                    workflow.name,
+                    workflow.description,
+                    _json(workflow.goal),
+                    workflow.version,
+                    created_at,
+                    updated_at,
+                ),
+            )
+        return Workflow(
+            id=workflow.id,
+            name=workflow.name,
+            description=workflow.description,
+            goal=dict(workflow.goal),
+            created_at=created_at,
+            updated_at=updated_at,
+            version=workflow.version,
+        )
+
+    def get(self, workflow_id: str) -> Workflow | None:
+        with self.store._lock:
+            row = self.store.connection.execute(
+                "SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list(self) -> list[Workflow]:
+        with self.store._lock:
+            rows = self.store.connection.execute(
+                "SELECT * FROM workflows ORDER BY created_at, workflow_id"
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def delete(self, workflow_id: str) -> bool:
+        with self.store.transaction() as conn:
+            cursor = conn.execute("DELETE FROM workflows WHERE workflow_id = ?", (workflow_id,))
+        return cursor.rowcount == 1
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> Workflow:
+        return Workflow(
+            id=row["workflow_id"],
+            name=row["name"],
+            description=row["description"],
+            goal=_loads(row["goal_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            version=int(row["version"]),
+        )
+
+
+class MemoryRepository:
+    """Transactional persistence for user-controlled memory records."""
+
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def create(self, record: MemoryRecord) -> MemoryRecord:
+        created_at = record.created_at or utc_now()
+        updated_at = record.updated_at or created_at
+        with self.store.transaction() as conn:
+            conn.execute(
+                """INSERT INTO memory_records
+                (memory_id, memory_key, value_json, category, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    record.id,
+                    record.key,
+                    _json(record.value),
+                    record.category,
+                    created_at,
+                    updated_at,
+                ),
+            )
+        return MemoryRecord(
+            id=record.id,
+            key=record.key,
+            value=record.value,
+            category=record.category,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    def upsert(self, record: MemoryRecord) -> tuple[MemoryRecord, bool]:
+        """Insert a new key or update its value while retaining its identity."""
+
+        now = utc_now()
+        with self.store.transaction() as conn:
+            existing = conn.execute(
+                "SELECT * FROM memory_records WHERE memory_key = ?", (record.key,)
+            ).fetchone()
+            if existing is None:
+                created_at = record.created_at or now
+                updated_at = record.updated_at or created_at
+                conn.execute(
+                    """INSERT INTO memory_records
+                    (memory_id, memory_key, value_json, category, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        record.id,
+                        record.key,
+                        _json(record.value),
+                        record.category,
+                        created_at,
+                        updated_at,
+                    ),
+                )
+                return (
+                    MemoryRecord(
+                        id=record.id,
+                        key=record.key,
+                        value=record.value,
+                        category=record.category,
+                        created_at=created_at,
+                        updated_at=updated_at,
+                    ),
+                    True,
+                )
+
+            updated_at = record.updated_at or now
+            conn.execute(
+                """UPDATE memory_records
+                SET value_json = ?, category = ?, updated_at = ? WHERE memory_id = ?""",
+                (_json(record.value), record.category, updated_at, existing["memory_id"]),
+            )
+            return (
+                MemoryRecord(
+                    id=existing["memory_id"],
+                    key=existing["memory_key"],
+                    value=record.value,
+                    category=record.category,
+                    created_at=existing["created_at"],
+                    updated_at=updated_at,
+                ),
+                False,
+            )
+
+    def get(self, memory_id: str) -> MemoryRecord | None:
+        with self.store._lock:
+            row = self.store.connection.execute(
+                "SELECT * FROM memory_records WHERE memory_id = ?", (memory_id,)
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list(self) -> list[MemoryRecord]:
+        with self.store._lock:
+            rows = self.store.connection.execute(
+                "SELECT * FROM memory_records ORDER BY created_at, memory_id"
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def delete(self, memory_id: str) -> bool:
+        with self.store.transaction() as conn:
+            cursor = conn.execute("DELETE FROM memory_records WHERE memory_id = ?", (memory_id,))
+        return cursor.rowcount == 1
+
+    def reset(self) -> int:
+        with self.store.transaction() as conn:
+            cursor = conn.execute("DELETE FROM memory_records")
+        return cursor.rowcount
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> MemoryRecord:
+        return MemoryRecord(
+            id=row["memory_id"],
+            key=row["memory_key"],
+            value=_loads(row["value_json"]),
+            category=row["category"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
