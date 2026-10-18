@@ -107,6 +107,7 @@ def test_dashboard_and_assets_are_served_without_exposing_arbitrary_files(client
 
 def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
     script = (Path(__file__).parents[1] / "frontend" / "script.js").read_text(encoding="utf-8")
+    dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text(encoding="utf-8")
 
     for path in (
         "/api/health",
@@ -119,10 +120,37 @@ def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
         "/cancel",
         "/api/evaluation/scenarios",
         "/api/evaluation/run",
+        "/api/system/capabilities",
+        "/api/system/snapshot",
+        "/api/workflows",
+        "/api/workflows/",
+        "/run",
+        "/api/memory",
+        "/api/memory/",
+        "/api/memory/reset",
     ):
         assert path in script
-    assert "innerHTML" not in script
+    for unsafe_api in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval("):
+        assert unsafe_api not in script
     assert "textContent" in script
+    assert "AbortController" in script
+    assert "SpeechRecognition" in script
+    assert "webkitSpeechRecognition" in script
+    assert "speechSynthesis" in script
+    assert 'method: "DELETE"' in script
+    assert "window.confirm" in script
+    for section in (
+        "command-center",
+        "automation-studio",
+        "live-console",
+        "system-intelligence",
+        "memory-center",
+        "evaluation-lab",
+        "security-capabilities",
+        "runbook",
+    ):
+        assert f'data-section-target="{section}"' in dashboard
+        assert f'id="{section}"' in dashboard
 
 
 def test_evaluation_lab_routes_expose_catalog_and_measured_report(client):

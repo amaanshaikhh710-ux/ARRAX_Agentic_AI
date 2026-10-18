@@ -4,7 +4,7 @@
 
 ## Project status
 
-The provider milestone is implemented as an optional, server-side Gemini planning boundary on top of the deterministic core. The destination repository contains the task model, deterministic and structured planners, allowlisted fixture tools, opt-in bounded workspace tools, orchestrator, SQLite persistence, bounded local workers, frontend, provider status API, an honest offline Evaluation Lab, and reproducible test packaging.
+The provider milestone is implemented as an optional, server-side Gemini planning boundary on top of the deterministic core. The destination repository contains the task model, deterministic and structured planners, allowlisted fixture tools, opt-in bounded workspace tools, orchestrator, SQLite persistence, bounded local workers, frontend, provider status API, a capability-aware measured system snapshot API, an honest offline Evaluation Lab, and reproducible test packaging.
 
 The application is intentionally being built as a fresh implementation. Completed work is marked explicitly as it is added and verified.
 
@@ -47,11 +47,14 @@ Currently implemented:
 - Offline pytest coverage for the complete safe core flow.
 - Flask application factory with validated task, plan, approval, cancellation, health, capabilities, and event-history endpoints.
 - Bounded asynchronous task workers with an explicit application shutdown hook for tests and embedding code.
-- Responsive HTML/CSS/vanilla JavaScript dashboard served by the Flask factory, connected to the real health, capabilities, task, event, approval, and cancellation endpoints.
+- Responsive HTML/CSS/vanilla JavaScript dashboard served by the Flask factory, connected to the real health, capabilities, task, event, approval, cancellation, workflow, memory, and system-observation endpoints.
 - Safe DOM rendering for user and API text, persisted event timeline, plan-step evidence, approval controls, cancellation, and API/provider availability states.
 - Opt-in workspace tools for bounded listing, UTF-8 text reading, text search, deterministic readiness-report creation, and actual-file verification. They are absent from the registry unless `ARRAX_WORKSPACE_ROOT` or an explicit workspace-root argument is configured.
 - A deterministic `workspace_report` goal that snapshots the approved root, pauses before the sensitive report write, then verifies the generated file from disk.
 - A deterministic Evaluation Lab catalog and synchronous report API covering verified success, bounded recovery, approval gates, verification guards, and timeout boundaries. Each run uses a fresh in-memory core and records measured evidence rather than fabricated benchmark values.
+- A capability-aware system snapshot service and API for bounded CPU, memory, disk, network, and process observations. It reports unavailable metrics explicitly and never returns absolute paths, command lines, process IDs, or user data.
+- Transactional reusable workflow persistence with versioned deterministic-goal validation, safe workflow CRUD, and bounded worker-backed workflow runs.
+- Transactional user-controlled memory persistence with bounded JSON values, credential-like data rejection, key upsert semantics, CRUD, and explicit reset.
 - A pinned `python:3.13.1-slim-bookworm` Docker test image, `.dockerignore`, lockfile installation, and documented judge-style offline test command.
 
 Not yet implemented:
@@ -65,6 +68,7 @@ The following foundation is configured for the core and future application layer
 
 - **Core:** Python 3.13.1 as declared in `.python-version`, with the standard library; the core does not require Flask.
 - **Backend:** Flask provides the local HTTP boundary around the core.
+- **System measurements:** `psutil==7.0.0` is the pinned, optional-at-runtime observation backend; standard-library disk usage remains available when it is absent.
 - **Frontend:** Server-served HTML, CSS, and vanilla JavaScript.
 - **Tests:** `pytest` with mocks for external providers and unsafe tools.
 - **Persistence:** Local SQLite through the Python standard library.
@@ -112,8 +116,10 @@ ARRAX_Agentic_AI/
 │   ├── tools.py           # allowlisted protocol, risk metadata, and safe fixtures
 │   ├── workspace.py       # opt-in root-scoped workspace tools and verifiers
 │   ├── storage.py         # SQLite repositories and schema
+│   ├── services.py        # workflow and memory validation/application services
 │   ├── orchestrator.py    # synchronous lifecycle and policy flow
 │   ├── evaluation.py      # deterministic offline regression catalog and runner
+│   ├── system.py          # bounded capability-aware system measurements
 │   └── api.py             # Flask factory, serialization, workers, and dashboard serving
 ├── frontend/
 │   ├── index.html         # server-served command center
@@ -251,6 +257,139 @@ verified, deterministic fallback, missing-key, unavailable-model, rate-limit,
 timeout, network, and invalid-response states without returning the external
 response body.
 
+### Reusable workflows and safe memory
+
+Reusable workflows are stored in the same SQLite database as tasks and events.
+Creating a workflow validates its name, description, version, bounded JSON goal,
+deterministic goal contract, registered tools, tool inputs, verifier, and risk
+floor. It does not create a task or execute a tool. The supported workflow
+version is `1`; request objects reject unknown fields.
+
+Workflow routes:
+
+```text
+GET    /api/workflows
+POST   /api/workflows
+GET    /api/workflows/<id>
+DELETE /api/workflows/<id>
+POST   /api/workflows/<id>/run
+```
+
+Create a workflow with a JSON object containing `name`, `description`, and
+`goal`; `version` is optional and defaults to `1`:
+
+```json
+{
+  "name": "Offline greeting",
+  "description": "Run the deterministic success fixture",
+  "goal": {"type": "success", "message": "hello"}
+}
+```
+
+`POST /api/workflows/<id>/run` creates a normal persisted AgentCore task and
+submits it to the existing bounded worker manager. It returns the same task
+document as the task API, normally with HTTP `202`. Missing workflows, invalid
+goals, duplicate names, worker capacity failures, and malformed JSON use the
+stable `{"error": {"code": "...", "message": "..."}}` response shape.
+
+User-controlled memory is persisted as records with `id`, `key`, `value`,
+`category`, `created_at`, and `updated_at`. Values must be bounded JSON and
+are returned only after validation. Posting an existing key updates that record
+and retains its ID. Credential-like keys or nested values containing `api_key`,
+`password`, `token`, `secret`, `private_key`, `authorization`, or `bearer` are
+rejected without echoing the rejected value. Absolute machine-path values are
+also rejected so memory responses remain local-data safe.
+
+Memory routes:
+
+```text
+GET    /api/memory
+POST   /api/memory
+DELETE /api/memory/<id>
+POST   /api/memory/reset
+```
+
+Reset accepts only an empty JSON object (or an empty body) and is the only
+memory reset operation. It returns the number of deleted records. Workflow
+deletion and memory reset are explicit operations; normal startup never
+deletes user data. Memory and workflow responses contain JSON-safe values and
+do not expose database paths, machine paths, or credentials.
+
+### Capability-aware system snapshot
+
+The local API exposes two read-only system-intelligence routes:
+
+```text
+GET /api/system/capabilities
+GET /api/system/snapshot
+```
+
+`/api/system/capabilities` describes whether each metric can be collected and
+reports the bounded process output/scan limits. It does not collect a snapshot.
+`/api/system/snapshot` returns a JSON document with this shape:
+
+```text
+{
+  "measured_at": "UTC timestamp",
+  "available": true,
+  "cpu": {"status": "measured", "percent": 0.0},
+  "memory": {"status": "measured", "total_bytes": 0, "used_bytes": 0, "percent": 0.0},
+  "disk": {"status": "measured", "target": "working_directory", "total_bytes": 0, "used_bytes": 0, "free_bytes": 0, "percent": 0.0},
+  "network": {"status": "measured", "bytes_sent": 0, "bytes_received": 0},
+  "processes": {"status": "measured", "items": [{"name": "python", "cpu_percent": 0.0, "memory_percent": 0.0}]},
+  "recommendations": []
+}
+```
+
+Each metric also includes `available` and `source`. A metric that cannot be
+collected has `status: "unavailable"`, null metric values (or an empty process
+list), and a fixed safe reason; the service never substitutes zeroes. The
+snapshot-level `available` flag is true only when at least one psutil-backed
+metric was measured successfully. Disk usage is collected with
+`shutil.disk_usage` against the application-configured `ARRAX_SYSTEM_DISK_PATH`
+or the current working directory, but only the labels `configured_path` and
+`working_directory` are returned. The configured path is never echoed.
+
+CPU collection uses psutil's non-blocking `interval=0.0` call. Process
+collection asks only for name, CPU percentage, and memory percentage, scans at
+most 50 processes by default, and returns at most 5 summaries. Process names
+are reduced to bounded basenames. No process IDs, command lines, executable
+paths, user names, or arbitrary file contents are read or returned. The
+limits can be reduced through the application configuration keys
+`ARRAX_SYSTEM_PROCESS_LIMIT` and `ARRAX_SYSTEM_PROCESS_SCAN_LIMIT`; the service
+enforces hard maximums of 20 and 100 respectively.
+
+Recommendations are observations rather than alerts. They are emitted only
+when a measured CPU, memory, or disk percentage is at least 90%, and include
+the measured value and the `>= 90` threshold. No recommendation is emitted
+for unavailable data. If the optional `psutil` import is unavailable, CPU,
+memory, network, and process capabilities are explicitly unavailable while
+safe standard-library disk usage may still be reported. The pinned dependency
+is installed by the normal lockfile path, but the runtime fallback remains
+for embedders that do not install optional dependencies. The service is
+injectable through `create_app(system_service=...)` and is safe to use on
+Linux/Docker and Windows.
+
+### Dashboard sections and browser voice fallback
+
+The dashboard navigation scrolls to eight functional sections:
+
+- **Command Center** creates a normal deterministic task from the selected scenario.
+- **Automation Studio** loads persisted workflows, saves the current structured scenario goal, and provides explicit run and confirmed delete controls. Saving never starts a task. A workflow run is shown in the existing Live Console task inspector and uses the normal task/event polling endpoints.
+- **Live Console** shows the selected task's persisted plan and event history.
+- **System Intelligence** loads measurement capabilities once and fetches a single measured snapshot only when the user presses the button. CPU, memory, disk, network, and bounded process summaries are rendered only from measured API fields. Unavailable metrics remain labelled unavailable, and API-provided threshold recommendations are shown with their measured timestamp.
+- **Memory Center** loads actual records, saves bounded text values, supports confirmed record deletion, and exposes the explicit confirmed reset operation. Credential-like values are rejected by the API; the browser clears a rejected submission and does not repeat it in a status message.
+- **Evaluation Lab**, **Security & Capabilities**, and **Runbook / How it works** retain their existing API-backed behavior.
+
+The scenario composer includes a push-to-talk fallback. When the browser exposes
+`SpeechRecognition` or `webkitSpeechRecognition`, pressing the button starts one
+recognition session and places its bounded transcript in the scenario textarea.
+The browser requests microphone permission only after that user action; there is
+no always-on recording. A separate read-last-status control uses
+`speechSynthesis` when available. Browsers without either API show an explicit
+unsupported/unavailable state and the dashboard does not claim that voice is
+working. Text entry and all non-voice controls remain available.
+
 ### Offline Evaluation Lab
 
 The Evaluation Lab is a deterministic regression evaluation, not a production
@@ -328,23 +467,37 @@ The documented provider variables are:
 | `GEMINI_API_KEY` | Optional server-side key. Blank means deterministic fallback in `auto`. |
 | `GEMINI_MODEL` | Exact model name checked at runtime; the example is account-dependent. |
 | `ARRAX_WORKSPACE_ROOT` | Optional approved workspace root, intentionally blank by default. |
+| `ARRAX_SYSTEM_DISK_PATH` | Optional application-owned disk target; responses expose only a safe label. Blank uses the current working directory. |
 
 Real API keys, passwords, tokens, personal data, and machine-specific paths
 must remain outside Git.
 
 ## Database and memory
 
-Milestone 1 uses a local SQLite database through the stdlib `sqlite3` module. Pass a filesystem path to `AgentCore` for persistence or use `":memory:"` for isolated tests.
+The local SQLite boundary uses only the stdlib `sqlite3` module. Pass a
+filesystem path to `AgentCore` for persistence or use `":memory:"` for isolated
+tests. Task, step, event, workflow, and memory repositories share the store's
+transaction and lock boundary, and workflow/memory services validate before
+calling their repositories.
 
-The eventual storage boundary must:
+The workflow and memory storage contracts:
 
-- Work with isolated test data.
-- Validate stored values.
-- Avoid committing personal runtime history.
-- Handle transactions and failures explicitly.
-- Support a deterministic offline test mode.
+- Workflows use a stable generated ID, unique name, description, validated
+  version, structured goal JSON, and created/updated UTC timestamps.
+- Memory uses a stable generated ID, unique upsert key, JSON-safe value,
+  category, and created/updated UTC timestamps.
+- Workflow goals are limited to the existing deterministic planner contract or
+  currently registered allowlisted tools. Shell, network, and arbitrary action
+  names are not persisted.
+- Workflow goals are limited to 16 KiB and 12 nesting levels. Memory values are
+  limited to 16 KiB and 8 nesting levels. Names, descriptions, keys, and
+  categories have separate input bounds.
+- Memory rejects credential-like fields and values before SQLite writes them.
+- No startup path resets workflows or memory. Only the explicit workflow DELETE
+  and memory reset endpoints remove user-controlled records.
 
-The project does not claim MySQL compatibility; SQLite is the deliberate local persistence boundary for this milestone.
+The project does not claim MySQL compatibility; SQLite is the deliberate local
+persistence boundary for this milestone.
 
 ## Running the application
 
@@ -395,6 +548,9 @@ The target is one offline command that exercises the complete safe test suite, i
 - Permission and approval decisions.
 - Timeout and cancellation behavior.
 - Result verification.
+- System snapshot schema, unavailable capability fallback, bounded process output, and path-redaction behavior.
+- Workflow schema persistence/reload, deterministic-goal validation, safe run lifecycle, and structured API errors.
+- Memory CRUD/upsert/reset lifecycle, bounded JSON validation, and credential-like data rejection without echoing values.
 - persistence and event-history reloads.
 - Workspace path containment, symlink rejection, bounded text I/O, safe report
   writes, actual-file verification, risk floors, and opt-in API capabilities.
@@ -414,6 +570,10 @@ The implemented core security model is:
 - Do not log secrets or raw credentials.
 - Render user-generated content safely in the frontend.
 - Keep external AI optional, server-side, verified, bounded, and mockable.
+- Validate reusable workflows against the deterministic planner and allowlisted
+  registry before persistence; saving a workflow never executes it.
+- Reject credential-like memory keys and values before persistence, and return
+  only bounded JSON-safe memory documents.
 
 The workspace boundary adds these controls:
 
@@ -457,6 +617,13 @@ The current known limitations are:
 - The readiness report is deterministic for a stable workspace, but it is not
   a backup, security scan, or proof that files are safe to execute.
 - No authentication or production deployment is supported.
+- System snapshots are point-in-time observations only. CPU utilization is a
+  non-blocking sample, process CPU values depend on the operating-system
+  backend's sampling state, and no historical trend is retained.
+- System metric scope is the local host or container visible to the process;
+  containers may report container-specific limits and counters. Missing OS
+  permissions or an absent optional `psutil` installation produce explicit
+  unavailable metrics rather than estimated values.
 - The final supported platform has not yet been validated.
 - Docker validation is environment-dependent; the documented judge-style build
   and network-disabled test run is not claimed as executed when Docker is not

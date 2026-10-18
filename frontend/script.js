@@ -80,6 +80,21 @@
     workspaceAvailable: false,
     evaluationCatalog: [],
     evaluationLoading: false,
+    workflows: [],
+    workflowBusy: null,
+    workflowSaving: false,
+    memory: [],
+    memoryBusy: null,
+    memorySaving: false,
+    systemSnapshotLoading: false,
+    voice: {
+      recognition: null,
+      listening: false,
+      supported: false,
+      speechSupported: false,
+    },
+    lastStatusMessage: "No status to read yet.",
+    controllers: {},
   };
 
   const elements = {};
@@ -220,6 +235,17 @@
       method: "POST",
       body: JSON.stringify(body),
     });
+  }
+
+  function deleteJson(path) {
+    return requestJson(path, { method: "DELETE" });
+  }
+
+  function replaceController(name) {
+    state.controllers[name]?.abort();
+    const controller = new AbortController();
+    state.controllers[name] = controller;
+    return controller;
   }
 
   function setApiNotice(message) {
@@ -495,6 +521,9 @@
       requestJson("/api/capabilities"),
       requestJson("/api/provider/status"),
       requestJson("/api/evaluation/scenarios"),
+      requestJson("/api/system/capabilities"),
+      requestJson("/api/workflows"),
+      requestJson("/api/memory"),
     ]);
     if (results[0].status === "fulfilled") {
       renderHealth(results[0].value);
@@ -519,11 +548,362 @@
     } else {
       renderEvaluationCatalogFailure(results[3].reason);
     }
+    if (results[4].status === "fulfilled") {
+      renderSystemCapabilities(results[4].value);
+    } else {
+      renderSystemCapabilitiesFailure(results[4].reason);
+    }
+    if (results[5].status === "fulfilled") {
+      renderWorkflows(results[5].value);
+    } else {
+      renderWorkflowFailure(results[5].reason);
+    }
+    if (results[6].status === "fulfilled") {
+      renderMemory(results[6].value);
+    } else {
+      renderMemoryFailure(results[6].reason);
+    }
+  }
+
+  function setWorkflowState(stateName) {
+    elements.workflowLoadingState.hidden = stateName !== "loading";
+    elements.workflowEmptyState.hidden = stateName !== "empty";
+    elements.workflowErrorState.hidden = stateName !== "error";
+  }
+
+  function renderWorkflowFailure(error) {
+    state.workflows = [];
+    elements.workflowList.replaceChildren();
+    elements.workflowErrorMessage.textContent = error?.message || "Workflows are unavailable.";
+    setWorkflowState("error");
+    elements.workflowSyncLabel.textContent = "Workflow API unavailable";
+  }
+
+  function renderWorkflows(workflowDocument) {
+    const workflows = Array.isArray(workflowDocument?.workflows) ? workflowDocument.workflows : [];
+    state.workflows = workflows;
+    elements.workflowList.replaceChildren();
+    elements.workflowSyncLabel.textContent = `${workflows.length} ${workflows.length === 1 ? "workflow" : "workflows"} loaded`;
+    if (!workflows.length) {
+      setWorkflowState("empty");
+      return;
+    }
+    setWorkflowState("ready");
+    workflows.forEach((workflow) => {
+      const card = document.createElement("article");
+      card.className = "workflow-card";
+      const header = document.createElement("div");
+      header.className = "workflow-card-header";
+      const title = document.createElement("div");
+      addText(title, "h4", "", workflow?.name);
+      addText(title, "p", "workflow-description", workflow?.description);
+      addText(header, "span", "workflow-version", `v${displayValue(workflow?.version, "1")}`);
+      header.prepend(title);
+      card.append(header);
+
+      const facts = document.createElement("dl");
+      facts.className = "workflow-facts";
+      addDefinition(facts, "Updated", workflow?.updated_at || workflow?.created_at);
+      addDefinition(facts, "Goal", formatData(workflow?.goal));
+      card.append(facts);
+
+      const actions = document.createElement("div");
+      actions.className = "workflow-actions";
+      const run = document.createElement("button");
+      run.type = "button";
+      run.className = "secondary-button";
+      run.textContent = state.workflowBusy === workflow?.id ? "Running…" : "Run workflow";
+      run.disabled = Boolean(state.workflowBusy);
+      run.addEventListener("click", () => runWorkflow(workflow));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "secondary-button danger-button";
+      remove.textContent = state.workflowBusy === workflow?.id ? "Updating…" : "Delete";
+      remove.disabled = Boolean(state.workflowBusy);
+      remove.addEventListener("click", () => deleteWorkflow(workflow));
+      actions.append(run, remove);
+      card.append(actions);
+      elements.workflowList.append(card);
+    });
+  }
+
+  async function loadWorkflows() {
+    const controller = replaceController("workflows");
+    elements.workflowSyncLabel.textContent = "Loading workflows";
+    setWorkflowState("loading");
+    try {
+      const workflowDocument = await requestJson("/api/workflows", { signal: controller.signal });
+      if (state.controllers.workflows !== controller) {
+        return;
+      }
+      renderWorkflows(workflowDocument);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        renderWorkflowFailure(error);
+      }
+    }
+  }
+
+  function renderSystemCapabilities(capabilityDocument) {
+    const capabilities = capabilityDocument?.capabilities && typeof capabilityDocument.capabilities === "object"
+      ? capabilityDocument.capabilities
+      : {};
+    const availableCount = Object.values(capabilities).filter((metric) => metric?.available === true).length;
+    elements.systemCapabilitySummary.textContent = capabilityDocument?.available === true
+      ? `${availableCount} measurement capabilities available`
+      : "The optional measurement backend is unavailable; disk remains independently reported when measurable.";
+    elements.systemCapabilityList.replaceChildren();
+    ["cpu", "memory", "disk", "network", "processes"].forEach((name) => {
+      const metric = capabilities[name] || {};
+      const value = metric.available === true
+        ? `Available · ${displayValue(metric.source, "source reported")}`
+        : `Unavailable · ${displayValue(metric.reason, "not reported")}`;
+      addDefinition(elements.systemCapabilityList, name, value);
+    });
+  }
+
+  function renderSystemCapabilitiesFailure(error) {
+    elements.systemCapabilitySummary.textContent = "Measurement capabilities unavailable.";
+    elements.systemCapabilityList.replaceChildren();
+    addText(elements.systemCapabilityList, "dd", "metric-unavailable", error?.message || "The capability endpoint could not be reached.");
+  }
+
+  function metricIsMeasured(metric, requiredFields = []) {
+    return Boolean(
+      metric
+      && metric.available === true
+      && metric.status === "measured"
+      && requiredFields.every((field) => metric[field] !== null && metric[field] !== undefined),
+    );
+  }
+
+  function formatBytes(value) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      return null;
+    }
+    if (value < 1024) {
+      return `${value} B`;
+    }
+    const units = ["KiB", "MiB", "GiB", "TiB"];
+    let scaled = value;
+    let unitIndex = -1;
+    while (scaled >= 1024 && unitIndex < units.length - 1) {
+      scaled /= 1024;
+      unitIndex += 1;
+    }
+    return `${scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+  }
+
+  function startMetricCard(container, title, metric, requiredFields = []) {
+    container.replaceChildren();
+    addText(container, "p", "eyebrow", title);
+    addText(container, "h3", "", metricIsMeasured(metric, requiredFields) ? "Measured" : "Unavailable");
+    if (!metricIsMeasured(metric, requiredFields)) {
+      addText(container, "p", "metric-unavailable", displayValue(metric?.reason, "The API did not report this metric."));
+      return null;
+    }
+    return container;
+  }
+
+  function addMetricFact(parent, label, value) {
+    if (value === null || value === undefined) {
+      return;
+    }
+    addDefinition(parent, label, value);
+  }
+
+  function renderSystemMetricCards(snapshot) {
+    const cpu = startMetricCard(elements.systemCpu, "CPU", snapshot?.cpu, ["percent"]);
+    if (cpu) {
+      const facts = document.createElement("dl");
+      facts.className = "metric-facts";
+      addMetricFact(facts, "Utilization", typeof snapshot.cpu.percent === "number" ? `${snapshot.cpu.percent.toFixed(1)}%` : null);
+      addMetricFact(facts, "Source", snapshot.cpu.source);
+      cpu.append(facts);
+    }
+
+    const memory = startMetricCard(elements.systemMemory, "Memory", snapshot?.memory, ["total_bytes", "used_bytes", "percent"]);
+    if (memory) {
+      const facts = document.createElement("dl");
+      facts.className = "metric-facts";
+      addMetricFact(facts, "Used", formatBytes(snapshot.memory.used_bytes));
+      addMetricFact(facts, "Total", formatBytes(snapshot.memory.total_bytes));
+      addMetricFact(facts, "Utilization", typeof snapshot.memory.percent === "number" ? `${snapshot.memory.percent.toFixed(1)}%` : null);
+      memory.append(facts);
+    }
+
+    const disk = startMetricCard(elements.systemDisk, "Disk", snapshot?.disk, ["total_bytes", "used_bytes", "free_bytes", "percent"]);
+    if (disk) {
+      const facts = document.createElement("dl");
+      facts.className = "metric-facts";
+      addMetricFact(facts, "Target", snapshot.disk.target);
+      addMetricFact(facts, "Used", formatBytes(snapshot.disk.used_bytes));
+      addMetricFact(facts, "Free", formatBytes(snapshot.disk.free_bytes));
+      addMetricFact(facts, "Utilization", typeof snapshot.disk.percent === "number" ? `${snapshot.disk.percent.toFixed(1)}%` : null);
+      disk.append(facts);
+    }
+
+    const network = startMetricCard(elements.systemNetwork, "Network", snapshot?.network, ["bytes_sent", "bytes_received"]);
+    if (network) {
+      const facts = document.createElement("dl");
+      facts.className = "metric-facts";
+      addMetricFact(facts, "Sent", formatBytes(snapshot.network.bytes_sent));
+      addMetricFact(facts, "Received", formatBytes(snapshot.network.bytes_received));
+      network.append(facts);
+    }
+
+    const processes = startMetricCard(elements.systemProcesses, "Process summaries", snapshot?.processes);
+    if (processes) {
+      const items = Array.isArray(snapshot.processes.items) ? snapshot.processes.items : [];
+      if (!items.length) {
+        addText(processes, "p", "metric-unavailable", "Measured, but no process summaries were returned.");
+      } else {
+        const list = document.createElement("ul");
+        list.className = "system-process-list";
+        items.forEach((item) => {
+          const row = document.createElement("li");
+          addText(row, "strong", "", item?.name);
+          addText(row, "span", "", `CPU ${typeof item?.cpu_percent === "number" ? item.cpu_percent.toFixed(1) : "—"}% · memory ${typeof item?.memory_percent === "number" ? item.memory_percent.toFixed(1) : "—"}%`);
+          list.append(row);
+        });
+        processes.append(list);
+      }
+      if (typeof snapshot.processes.sampled === "number" && typeof snapshot.processes.limit === "number") {
+        addText(processes, "p", "metric-note", `Sampled ${snapshot.processes.sampled}; output bounded to ${snapshot.processes.limit}.`);
+      }
+    }
+  }
+
+  function renderSystemRecommendations(recommendations) {
+    elements.systemRecommendations.replaceChildren();
+    if (!Array.isArray(recommendations) || !recommendations.length) {
+      addText(elements.systemRecommendations, "li", "recommendation-empty", "No threshold recommendations were returned by the API.");
+      return;
+    }
+    recommendations.forEach((recommendation) => {
+      const item = document.createElement("li");
+      addText(item, "strong", "", recommendation?.message);
+      const threshold = recommendation?.threshold;
+      const thresholdText = threshold && typeof threshold === "object"
+        ? `${displayValue(recommendation?.metric, "metric")} ${displayValue(threshold.operator, "at")} ${displayValue(threshold.value, "threshold")} · observed ${displayValue(recommendation?.observed)}`
+        : displayValue(recommendation?.metric, "Measured threshold");
+      addText(item, "span", "recommendation-detail", thresholdText);
+      elements.systemRecommendations.append(item);
+    });
+  }
+
+  function renderSystemSnapshot(snapshot) {
+    elements.systemSnapshotEmpty.hidden = true;
+    elements.systemSnapshotError.hidden = true;
+    elements.systemSnapshotResults.hidden = false;
+    elements.systemMeasuredAt.textContent = displayValue(snapshot?.measured_at, "unavailable");
+    elements.systemSnapshotStatus.textContent = snapshot?.available === true
+      ? "Snapshot includes measured psutil-backed data"
+      : "No psutil-backed metric was measured; unavailable values remain explicit";
+    renderSystemMetricCards(snapshot || {});
+    renderSystemRecommendations(snapshot?.recommendations);
+  }
+
+  async function loadSystemSnapshot() {
+    if (state.systemSnapshotLoading) {
+      return;
+    }
+    state.systemSnapshotLoading = true;
+    const controller = replaceController("systemSnapshot");
+    elements.measureSystem.disabled = true;
+    elements.measureSystemLabel.textContent = "Measuring…";
+    elements.systemSnapshotStatus.textContent = "Requesting one measured snapshot";
+    setApiNotice("");
+    try {
+      const snapshot = await requestJson("/api/system/snapshot", { signal: controller.signal });
+      renderSystemSnapshot(snapshot);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        elements.systemSnapshotResults.hidden = true;
+        elements.systemSnapshotEmpty.hidden = true;
+        elements.systemSnapshotError.hidden = false;
+        elements.systemSnapshotErrorMessage.textContent = error?.message || "The system snapshot could not be loaded.";
+        setApiNotice(error?.message || "The system snapshot could not be loaded.");
+      }
+    } finally {
+      state.systemSnapshotLoading = false;
+      elements.measureSystem.disabled = false;
+      elements.measureSystemLabel.textContent = "Measure snapshot";
+    }
+  }
+
+  function setMemoryState(stateName) {
+    elements.memoryLoadingState.hidden = stateName !== "loading";
+    elements.memoryEmptyState.hidden = stateName !== "empty";
+    elements.memoryErrorState.hidden = stateName !== "error";
+  }
+
+  function renderMemoryFailure(error) {
+    state.memory = [];
+    elements.memoryList.replaceChildren();
+    elements.memoryErrorMessage.textContent = error?.message || "Memory is unavailable.";
+    elements.memorySyncLabel.textContent = "Memory API unavailable";
+    setMemoryState("error");
+  }
+
+  function renderMemory(memoryDocument) {
+    const records = Array.isArray(memoryDocument?.memory) ? memoryDocument.memory : [];
+    state.memory = records;
+    elements.memoryList.replaceChildren();
+    elements.memorySyncLabel.textContent = `${records.length} ${records.length === 1 ? "record" : "records"} loaded`;
+    if (!records.length) {
+      setMemoryState("empty");
+      return;
+    }
+    setMemoryState("ready");
+    records.forEach((record) => {
+      const card = document.createElement("article");
+      card.className = "memory-card";
+      const header = document.createElement("div");
+      header.className = "memory-card-header";
+      addText(header, "h4", "", record?.key);
+      addText(header, "span", "memory-category", record?.category);
+      card.append(header);
+      const value = document.createElement("pre");
+      value.className = "memory-value";
+      value.textContent = formatData(record?.value);
+      card.append(value);
+      const footer = document.createElement("div");
+      footer.className = "memory-card-footer";
+      addText(footer, "time", "memory-updated", record?.updated_at || record?.created_at);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "secondary-button danger-button compact-button";
+      remove.textContent = state.memoryBusy === record?.id ? "Deleting…" : "Delete";
+      remove.disabled = Boolean(state.memoryBusy);
+      remove.addEventListener("click", () => deleteMemory(record));
+      footer.append(remove);
+      card.append(footer);
+      elements.memoryList.append(card);
+    });
+  }
+
+  async function loadMemory() {
+    const controller = replaceController("memory");
+    elements.memorySyncLabel.textContent = "Loading memory";
+    setMemoryState("loading");
+    try {
+      const memoryDocument = await requestJson("/api/memory", { signal: controller.signal });
+      if (state.controllers.memory !== controller) {
+        return;
+      }
+      renderMemory(memoryDocument);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        renderMemoryFailure(error);
+      }
+    }
   }
 
   function buildGoal() {
     const mode = elements.scenarioMode.value;
-    const detail = elements.scenarioContext.value.trim() || MODE_DETAILS[mode].fallback;
+    const details = MODE_DETAILS[mode] || MODE_DETAILS.success;
+    const detail = elements.scenarioContext.value.trim() || details.fallback;
     if (mode === "failure_recovery") {
       return { type: mode, key: detail };
     }
@@ -536,6 +916,313 @@
     return { type: mode, message: detail };
   }
 
+  function renderWorkflowGoalPreview() {
+    elements.workflowGoalPreview.textContent = formatData(buildGoal());
+  }
+
+  function setWorkflowStatus(message) {
+    elements.workflowSyncLabel.textContent = message || "";
+  }
+
+  async function saveWorkflow(event) {
+    event.preventDefault();
+    if (state.workflowSaving) {
+      return;
+    }
+    const name = elements.workflowName.value.trim();
+    const description = elements.workflowDescription.value.trim();
+    if (!name || !description) {
+      setWorkflowFormStatus("Workflow name and description are required.");
+      return;
+    }
+    state.workflowSaving = true;
+    elements.saveWorkflow.disabled = true;
+    elements.saveWorkflowLabel.textContent = "Saving…";
+    setWorkflowFormStatus("Validating and saving the workflow; it will not execute automatically.");
+    setApiNotice("");
+    try {
+      await postJson("/api/workflows", {
+        name,
+        description,
+        goal: buildGoal(),
+      });
+      elements.workflowForm.reset();
+      setWorkflowFormStatus("Workflow saved. Run it explicitly from the persisted library.");
+      await loadWorkflows();
+    } catch (error) {
+      setWorkflowFormStatus(error?.message || "The workflow could not be saved.");
+      setApiNotice(error?.message || "The workflow could not be saved.");
+    } finally {
+      state.workflowSaving = false;
+      elements.saveWorkflow.disabled = false;
+      elements.saveWorkflowLabel.textContent = "Save workflow";
+      renderWorkflowGoalPreview();
+    }
+  }
+
+  function scrollToSection(sectionId) {
+    const section = byId(sectionId);
+    if (!section) {
+      return;
+    }
+    section.scrollIntoView({ behavior: isReducedMotion() ? "auto" : "smooth", block: "start" });
+    document.querySelectorAll("[data-section-target]").forEach((item) => {
+      const active = item.dataset.sectionTarget === sectionId;
+      item.classList.toggle("is-active", active);
+      if (active) {
+        item.setAttribute("aria-current", "page");
+      } else {
+        item.removeAttribute("aria-current");
+      }
+    });
+  }
+
+  async function runWorkflow(workflow) {
+    if (!workflow?.id || state.workflowBusy) {
+      return;
+    }
+    if (state.task && !isTerminal(state.task.status)) {
+      setWorkflowFormStatus("Finish or cancel the monitored task before starting another run.");
+      return;
+    }
+    state.workflowBusy = workflow.id;
+    renderWorkflows({ workflows: state.workflows });
+    setWorkflowStatus(`Running ${displayValue(workflow.name, "workflow")}…`);
+    setApiNotice("");
+    try {
+      const task = await postJson(`/api/workflows/${encodeURIComponent(workflow.id)}/run`, {});
+      state.events = [];
+      renderTask(task);
+      renderTimeline([]);
+      setWorkflowFormStatus("Workflow run created. The Live Console is monitoring the persisted task.");
+      scrollToSection("live-console");
+      void pollTask(task.task_id);
+    } catch (error) {
+      setWorkflowFormStatus(error?.message || "The workflow could not be run.");
+      setApiNotice(error?.message || "The workflow could not be run.");
+    } finally {
+      state.workflowBusy = null;
+      renderWorkflows({ workflows: state.workflows });
+    }
+  }
+
+  async function deleteWorkflow(workflow) {
+    if (!workflow?.id || state.workflowBusy) {
+      return;
+    }
+    const name = displayValue(workflow.name, "this workflow");
+    if (!window.confirm(`Delete ${name}? This removes the persisted workflow but does not affect existing tasks.`)) {
+      return;
+    }
+    state.workflowBusy = workflow.id;
+    renderWorkflows({ workflows: state.workflows });
+    setWorkflowStatus(`Deleting ${name}…`);
+    try {
+      await deleteJson(`/api/workflows/${encodeURIComponent(workflow.id)}`);
+      setWorkflowFormStatus("Workflow deleted after confirmation.");
+      await loadWorkflows();
+    } catch (error) {
+      setWorkflowFormStatus(error?.message || "The workflow could not be deleted.");
+      setApiNotice(error?.message || "The workflow could not be deleted.");
+    } finally {
+      state.workflowBusy = null;
+      if (state.workflows.length) {
+        renderWorkflows({ workflows: state.workflows });
+      }
+    }
+  }
+
+  function setWorkflowFormStatus(message) {
+    elements.workflowFormStatus.textContent = message || "";
+    if (message) {
+      state.lastStatusMessage = message;
+      elements.speakStatus.disabled = !state.voice.speechSupported;
+    }
+  }
+
+  function setMemoryStatus(message) {
+    elements.memoryFormStatus.textContent = message || "";
+    if (message) {
+      state.lastStatusMessage = message;
+      elements.speakStatus.disabled = !state.voice.speechSupported;
+    }
+  }
+
+  async function saveMemory(event) {
+    event.preventDefault();
+    if (state.memorySaving) {
+      return;
+    }
+    const key = elements.memoryKey.value.trim();
+    const category = elements.memoryCategory.value.trim();
+    const value = elements.memoryValue.value.trim();
+    if (!key || !category || !value) {
+      setMemoryStatus("Memory key, category, and bounded text value are required.");
+      return;
+    }
+    state.memorySaving = true;
+    elements.saveMemory.disabled = true;
+    elements.saveMemoryLabel.textContent = "Saving…";
+    setMemoryStatus("Validating and saving memory through the API…");
+    setApiNotice("");
+    try {
+      await postJson("/api/memory", { key, value, category });
+      elements.memoryValue.value = "";
+      setMemoryStatus("Memory saved. The persisted record list was refreshed.");
+      await loadMemory();
+    } catch (error) {
+      if (error?.code === "memory_secret_rejected") {
+        elements.memoryKey.value = "";
+        elements.memoryValue.value = "";
+        setMemoryStatus("Memory rejected: credential-like data is not stored, and the submitted value was cleared.");
+      } else {
+        setMemoryStatus(error?.message || "The memory record could not be saved.");
+      }
+      setApiNotice(error?.code === "memory_secret_rejected"
+        ? "The memory API rejected credential-like data."
+        : (error?.message || "The memory record could not be saved."));
+    } finally {
+      state.memorySaving = false;
+      elements.saveMemory.disabled = false;
+      elements.saveMemoryLabel.textContent = "Save memory";
+    }
+  }
+
+  async function deleteMemory(record) {
+    if (!record?.id || state.memoryBusy) {
+      return;
+    }
+    const key = displayValue(record.key, "this record");
+    if (!window.confirm(`Delete memory record ${key}?`)) {
+      return;
+    }
+    state.memoryBusy = record.id;
+    renderMemory({ memory: state.memory });
+    setMemoryStatus(`Deleting ${key}…`);
+    try {
+      await deleteJson(`/api/memory/${encodeURIComponent(record.id)}`);
+      setMemoryStatus("Memory record deleted after confirmation.");
+      await loadMemory();
+    } catch (error) {
+      setMemoryStatus(error?.message || "The memory record could not be deleted.");
+      setApiNotice(error?.message || "The memory record could not be deleted.");
+    } finally {
+      state.memoryBusy = null;
+      renderMemory({ memory: state.memory });
+    }
+  }
+
+  async function resetMemory() {
+    if (!window.confirm("Reset all persisted memory records? This cannot be undone.")) {
+      return;
+    }
+    elements.resetMemory.disabled = true;
+    setMemoryStatus("Resetting memory after confirmation…");
+    try {
+      const result = await postJson("/api/memory/reset", {});
+      setMemoryStatus(`Memory reset completed. ${displayValue(result?.deleted, "0")} records deleted.`);
+      await loadMemory();
+    } catch (error) {
+      setMemoryStatus(error?.message || "Memory reset could not be completed.");
+      setApiNotice(error?.message || "Memory reset could not be completed.");
+    } finally {
+      elements.resetMemory.disabled = false;
+    }
+  }
+
+  function setVoiceStatus(message) {
+    elements.voiceStatus.textContent = message;
+    if (message) {
+      state.lastStatusMessage = message;
+      elements.speakStatus.disabled = !state.voice.speechSupported;
+    }
+  }
+
+  function configureVoice() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (typeof Recognition === "function") {
+      state.voice.supported = true;
+      const recognition = new Recognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = document.documentElement.lang || "en-US";
+      recognition.onstart = () => {
+        state.voice.listening = true;
+        elements.voiceInputLabel.textContent = "Stop listening";
+        setVoiceStatus("Listening… release when the transcript is complete.");
+      };
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results || [])
+          .map((result) => result[0]?.transcript || "")
+          .join(" ")
+          .trim();
+        if (transcript) {
+          elements.scenarioContext.value = transcript.slice(0, 500);
+          renderWorkflowGoalPreview();
+          setVoiceStatus("Processing transcript…");
+        }
+      };
+      recognition.onerror = (event) => {
+        state.voice.listening = false;
+        elements.voiceInputLabel.textContent = "Push to talk";
+        const message = event?.error === "not-allowed"
+          ? "Voice unavailable: microphone permission was not granted."
+          : "Voice unavailable: the browser could not complete speech recognition.";
+        setVoiceStatus(message);
+      };
+      recognition.onend = () => {
+        state.voice.listening = false;
+        elements.voiceInputLabel.textContent = "Push to talk";
+        if (elements.voiceStatus.textContent === "Processing transcript…") {
+          setVoiceStatus("Transcript ready.");
+        } else if (!elements.voiceStatus.textContent.startsWith("Voice unavailable")) {
+          setVoiceStatus("Voice input ended.");
+        }
+      };
+      state.voice.recognition = recognition;
+      elements.voiceInput.disabled = false;
+      elements.voiceInputLabel.textContent = "Push to talk";
+      setVoiceStatus("Ready when you press the button.");
+    } else {
+      setVoiceStatus("Voice unavailable: this browser does not support speech recognition.");
+    }
+
+    state.voice.speechSupported = "speechSynthesis" in window
+      && typeof window.SpeechSynthesisUtterance === "function";
+    elements.speakStatus.disabled = !state.voice.speechSupported;
+    elements.speakStatusLabel.textContent = state.voice.speechSupported ? "Read last status" : "Read status unavailable";
+  }
+
+  function toggleVoiceInput() {
+    if (!state.voice.recognition) {
+      return;
+    }
+    if (state.voice.listening) {
+      state.voice.recognition.stop();
+      setVoiceStatus("Processing transcript…");
+      return;
+    }
+    try {
+      state.voice.recognition.start();
+      setVoiceStatus("Starting microphone…");
+    } catch (_error) {
+      setVoiceStatus("Voice unavailable: the browser could not start speech recognition.");
+    }
+  }
+
+  function readLastStatus() {
+    if (!state.voice.speechSupported) {
+      setVoiceStatus("Read status unavailable: this browser does not support speech synthesis.");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new window.SpeechSynthesisUtterance(state.lastStatusMessage || "No status to read yet.");
+    utterance.onstart = () => setVoiceStatus("Speaking last status…");
+    utterance.onend = () => setVoiceStatus("Last status spoken.");
+    utterance.onerror = () => setVoiceStatus("Read status unavailable: speech synthesis could not complete.");
+    window.speechSynthesis.speak(utterance);
+  }
+
   function updateModeHelp() {
     const mode = elements.scenarioMode.value;
     const details = MODE_DETAILS[mode] || MODE_DETAILS.success;
@@ -544,6 +1231,10 @@
 
   function setFormStatus(message) {
     elements.formStatus.textContent = message || "";
+    if (message) {
+      state.lastStatusMessage = message;
+      elements.speakStatus.disabled = !state.voice.speechSupported;
+    }
   }
 
   function renderEmptyState() {
@@ -844,6 +1535,11 @@
     elements.scenarioMode = byId("scenario-mode");
     elements.scenarioHelp = byId("scenario-help");
     elements.scenarioContext = byId("scenario-context");
+    elements.voiceInput = byId("voice-input");
+    elements.voiceInputLabel = byId("voice-input-label");
+    elements.speakStatus = byId("speak-status");
+    elements.speakStatusLabel = byId("speak-status-label");
+    elements.voiceStatus = byId("voice-status");
     elements.goalForm = byId("goal-form");
     elements.formStatus = byId("form-status");
     elements.submitTask = byId("submit-task");
@@ -862,6 +1558,51 @@
     elements.planCount = byId("plan-count");
     elements.timelineList = byId("timeline-list");
     elements.eventCount = byId("event-count");
+    elements.workflowForm = byId("workflow-form");
+    elements.workflowName = byId("workflow-name");
+    elements.workflowDescription = byId("workflow-description");
+    elements.workflowGoalPreview = byId("workflow-goal-preview");
+    elements.workflowFormStatus = byId("workflow-form-status");
+    elements.saveWorkflow = byId("save-workflow");
+    elements.saveWorkflowLabel = byId("save-workflow-label");
+    elements.refreshWorkflows = byId("refresh-workflows");
+    elements.workflowSyncLabel = byId("workflow-sync-label");
+    elements.workflowLoadingState = byId("workflow-loading-state");
+    elements.workflowEmptyState = byId("workflow-empty-state");
+    elements.workflowErrorState = byId("workflow-error-state");
+    elements.workflowErrorMessage = byId("workflow-error-message");
+    elements.workflowList = byId("workflow-list");
+    elements.measureSystem = byId("measure-system");
+    elements.measureSystemLabel = byId("measure-system-label");
+    elements.systemCapabilitySummary = byId("system-capability-summary");
+    elements.systemCapabilityList = byId("system-capability-list");
+    elements.systemSnapshotEmpty = byId("system-snapshot-empty");
+    elements.systemSnapshotError = byId("system-snapshot-error");
+    elements.systemSnapshotErrorMessage = byId("system-snapshot-error-message");
+    elements.systemSnapshotResults = byId("system-snapshot-results");
+    elements.systemMeasuredAt = byId("system-measured-at");
+    elements.systemSnapshotStatus = byId("system-snapshot-status");
+    elements.systemCpu = byId("system-cpu");
+    elements.systemMemory = byId("system-memory");
+    elements.systemDisk = byId("system-disk");
+    elements.systemNetwork = byId("system-network");
+    elements.systemProcesses = byId("system-processes");
+    elements.systemRecommendations = byId("system-recommendations");
+    elements.memoryForm = byId("memory-form");
+    elements.memoryKey = byId("memory-key");
+    elements.memoryCategory = byId("memory-category");
+    elements.memoryValue = byId("memory-value");
+    elements.memoryFormStatus = byId("memory-form-status");
+    elements.saveMemory = byId("save-memory");
+    elements.saveMemoryLabel = byId("save-memory-label");
+    elements.refreshMemory = byId("refresh-memory");
+    elements.resetMemory = byId("reset-memory");
+    elements.memorySyncLabel = byId("memory-sync-label");
+    elements.memoryLoadingState = byId("memory-loading-state");
+    elements.memoryEmptyState = byId("memory-empty-state");
+    elements.memoryErrorState = byId("memory-error-state");
+    elements.memoryErrorMessage = byId("memory-error-message");
+    elements.memoryList = byId("memory-list");
     elements.toolList = byId("tool-list");
     elements.toolCount = byId("tool-count");
     elements.capabilityExecution = byId("capability-execution");
@@ -892,11 +1633,24 @@
   function init() {
     cacheElements();
     connectNavigation();
-    elements.scenarioMode.addEventListener("change", updateModeHelp);
+    elements.scenarioMode.addEventListener("change", () => {
+      updateModeHelp();
+      renderWorkflowGoalPreview();
+    });
+    elements.scenarioContext.addEventListener("input", renderWorkflowGoalPreview);
     elements.goalForm.addEventListener("submit", submitTask);
     elements.cancelTask.addEventListener("click", cancelTask);
     elements.runEvaluation.addEventListener("click", runEvaluation);
+    elements.voiceInput.addEventListener("click", toggleVoiceInput);
+    elements.speakStatus.addEventListener("click", readLastStatus);
+    elements.workflowForm.addEventListener("submit", saveWorkflow);
+    elements.refreshWorkflows.addEventListener("click", loadWorkflows);
+    elements.measureSystem.addEventListener("click", loadSystemSnapshot);
+    elements.memoryForm.addEventListener("submit", saveMemory);
+    elements.refreshMemory.addEventListener("click", loadMemory);
+    elements.resetMemory.addEventListener("click", resetMemory);
     updateModeHelp();
+    renderWorkflowGoalPreview();
     renderEmptyState();
     renderCapabilities({
       tools: [],
@@ -908,6 +1662,11 @@
     elements.evaluationCatalogCount.textContent = "Loading";
     elements.evaluationCatalogList.replaceChildren();
     addText(elements.evaluationCatalogList, "li", "evaluation-empty", "Loading the actual catalog from the API.");
+    setWorkflowState("loading");
+    setMemoryState("loading");
+    elements.systemSnapshotResults.hidden = true;
+    elements.systemSnapshotError.hidden = true;
+    configureVoice();
     void loadSystemData();
   }
 
