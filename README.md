@@ -4,9 +4,9 @@
 
 ## Project status
 
-This repository is currently in the documentation and configuration phases. The destination repository contains no runtime implementation yet.
+Milestone 1 is implemented as a small, offline deterministic agent core. The destination repository contains the task model, planner, allowlisted fixture tools, orchestrator, SQLite persistence, and pytest coverage described below.
 
-The application described below is the intended fresh implementation, not a claim that these features already exist. Completed work will be marked explicitly as it is added and verified.
+The application is intentionally being built as a fresh implementation. Completed work is marked explicitly as it is added and verified.
 
 ## Overview
 
@@ -34,27 +34,28 @@ The project is being developed in OmniRush sessions in accordance with the Front
 
 Currently implemented:
 
-- None. This repository currently contains documentation only.
+- Structured task and plan-step models with lifecycle, risk, approval, retry, result, and verification fields.
+- Deterministic planning for structured actions and fixture demo goals; no AI provider is required.
+- An explicit allowlisted tool protocol and registry with input validation and bounded execution timeouts.
+- Safe in-memory fixture tools for success, approval, failure recovery, verification, and timeout testing.
+- A synchronous plan/policy/act/observe/verify/recover orchestrator with cancellation boundaries.
+- SQLite task, step, and event repositories using stdlib `sqlite3` and transactions.
+- Offline pytest coverage for the complete safe core flow.
 
 Not yet implemented:
 
-- Task intake or planning.
-- Tool execution.
-- Desktop automation.
-- AI-provider integration.
-- Database or persistent memory.
-- Frontend dashboard.
-- Authentication.
-- Production deployment.
+- Desktop automation, unrestricted shell or filesystem actions, network calls, or external APIs.
+- AI-provider integration, frontend dashboard, authentication, or production deployment.
 
 ## Configured technology baseline
 
-The following foundation is now configured, but the application runtime is not yet implemented:
+The following foundation is configured for the core and future application layers:
 
-- **Backend:** Python 3.12 or newer with Flask.
+- **Core:** Python 3.12 or newer with the standard library; the core does not require Flask.
+- **Backend baseline:** Flask remains available for a future HTTP boundary.
 - **Frontend:** Server-served HTML, CSS, and vanilla JavaScript.
 - **Tests:** `pytest` with mocks for external providers and unsafe tools.
-- **Persistence:** A portable local store selected after the execution model is defined.
+- **Persistence:** Local SQLite through the Python standard library.
 - **Packaging:** Pinned dependency manifests, a Python version declaration, and a future Dockerfile suitable for offline test execution.
 
 The current dependency files are `requirements.txt`, `requirements-dev.txt`, and `requirements.lock`. The supported local interpreter is pinned in `.python-version`.
@@ -86,22 +87,19 @@ Safe local adapters and test doubles
 
 AI output, if added, will be treated as untrusted input. It will not be allowed to grant itself permissions, select unregistered tools, or bypass confirmation requirements.
 
-## Planned folder structure
+## Current folder structure
 
-The repository currently has no source folders. The target structure is expected to be similar to:
+The first milestone keeps the core in a small set of focused modules:
 
 ```text
 ARRAX_Agentic_AI/
 ├── src/arrax/
-│   ├── app.py             # application factory and startup
-│   ├── config.py          # validated environment configuration
-│   ├── api/               # HTTP routes and response schemas
-│   ├── agent/             # task lifecycle and planning contracts
-│   ├── tools/             # allowlisted tools and permission policies
-│   ├── storage/           # persistence boundary
-│   └── verification/      # execution-result verification
-├── frontend/              # dashboard assets
-├── tests/                 # offline unit, API, and lifecycle tests
+│   ├── domain.py          # task, plan, risk, and status contracts
+│   ├── planner.py         # deterministic structured-goal planner
+│   ├── tools.py           # allowlisted protocol and safe fixtures
+│   ├── storage.py         # SQLite repositories and schema
+│   └── orchestrator.py    # synchronous lifecycle and policy flow
+├── tests/                 # offline lifecycle and boundary tests
 ├── .env.example           # safe empty configuration template
 ├── .gitignore              # excludes secrets and runtime data
 ├── Dockerfile             # future reproducible build/test environment
@@ -113,20 +111,47 @@ ARRAX_Agentic_AI/
 └── README.md
 ```
 
-The structure is provisional until the first implementation slice is designed and tested.
+HTTP, frontend, and platform-specific adapters remain future layers around this core.
 
 ## Installation and setup
 
-There is no runnable application yet because the application implementation has not started. The repository foundation can be prepared with:
+The core can be installed and tested with:
 
 ```text
 python -m venv .venv
 python -m pip install -r requirements.lock
+python -m pytest -q
 ```
 
-These commands install the configured baseline only; they do not start an application. They will be verified from a clean checkout before being treated as a completed setup path.
+The synchronous API is available without Flask. From a checkout without an
+editable package install, expose the `src` layout first:
 
-When the first runnable slice is added, this section will contain the exact commands for:
+PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+```
+
+POSIX shells:
+
+```sh
+export PYTHONPATH=src
+```
+
+Then:
+
+```python
+from arrax import AgentCore, TaskStatus
+
+agent = AgentCore(":memory:")
+task = agent.create_task({"type": "success", "message": "offline demo"})
+finished = agent.run_task(task.id)
+assert finished.status is TaskStatus.COMPLETED
+history = agent.get_events(task.id)
+agent.close()
+```
+
+Future application layers can extend this section with exact commands for:
 
 1. Selecting the supported Python version.
 2. Creating an isolated environment.
@@ -138,13 +163,13 @@ Commands will be tested from a clean checkout before they are documented as work
 
 ## Environment variables
 
-The `.env.example` file is present as a safe template, but no environment variables are currently consumed because no runtime code exists yet.
+The `.env.example` file is present as a safe template. Milestone 1 consumes no environment variables and stores no credentials or secrets.
 
 Future integrations will expose only documented variable names in `.env.example`. Real API keys, passwords, tokens, personal data, and machine-specific paths must remain outside Git.
 
 ## Database and memory
 
-No database or persistent memory layer is currently implemented or configured.
+Milestone 1 uses a local SQLite database through the stdlib `sqlite3` module. Pass a filesystem path to `AgentCore` for persistence or use `":memory:"` for isolated tests.
 
 The eventual storage boundary must:
 
@@ -154,17 +179,21 @@ The eventual storage boundary must:
 - Handle transactions and failures explicitly.
 - Support a deterministic offline test mode.
 
-The storage choice will be documented only after it is implemented and verified. The project does not currently claim MySQL compatibility or database persistence.
+The project does not claim MySQL compatibility; SQLite is the deliberate local persistence boundary for this milestone.
 
 ## Running the application
 
-The application cannot be run yet. A working run command will be added after the first vertical implementation slice is complete.
+Milestone 1 is a library core and has no HTTP or desktop runtime. Use the synchronous `AgentCore` API shown above or run the offline test suite.
 
 The default development mode is expected to be local-only and safe. Network exposure, authentication, and any platform-specific adapters will be addressed explicitly rather than enabled by default.
 
 ## Testing
 
-The pytest configuration is present, but no test suite exists yet. Running pytest before tests are added is not a passing application check.
+The offline test suite is implemented and runs with:
+
+```text
+python -m pytest -q
+```
 
 The target is one offline command that exercises the complete safe test suite, including:
 
@@ -174,16 +203,13 @@ The target is one offline command that exercises the complete safe test suite, i
 - Permission and approval decisions.
 - Timeout and cancellation behavior.
 - Result verification.
-- API error responses.
-- Mocked AI, storage, and platform adapters.
+- persistence and event-history reloads.
 
 Tests must never perform real shutdowns, restarts, destructive filesystem operations, unrestricted shell commands, or real messages.
 
 ## Security model and limitations
 
-The current repository has no runtime security surface because it contains no application code.
-
-The intended security model is:
+The implemented core security model is:
 
 - Deny unknown tools by default.
 - Keep permission decisions in deterministic application code.
@@ -201,9 +227,7 @@ This project will not claim that a tool is successful until its completion can b
 
 The current known limitations are:
 
-- No executable application exists yet.
-- No frontend exists yet.
-- No persistence exists yet.
+- No HTTP application or frontend exists yet.
 - No AI provider is connected.
 - No desktop automation adapter is available.
 - No authentication or production deployment is supported.
@@ -214,11 +238,11 @@ These items will be removed from this list only after implementation and verific
 
 ## Roadmap
 
-1. Establish the project configuration and reproducible test command.
-2. Implement a minimal task lifecycle with deterministic test tools.
+1. Establish the project configuration and reproducible test command. **Complete.**
+2. Implement a minimal task lifecycle with deterministic test tools. **Complete.**
 3. Add the API boundary and safe execution-status responses.
 4. Add a small dashboard for task input, plan review, approval, and results.
-5. Add cancellation, timeouts, and result verification.
+5. Add cancellation, timeouts, and result verification. **Core behavior complete; application surfaces remain.**
 6. Add optional AI planning behind strict schema and permission validation.
 7. Add optional platform adapters only after the core workflow is tested.
 8. Validate the project in a clean Docker environment with network access disabled for tests.
