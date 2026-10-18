@@ -92,6 +92,53 @@ def test_workflow_save_does_not_create_or_execute_a_task_and_run_uses_worker(app
     assert client.get(f"/api/workflows/{workflow['id']}").status_code == 404
 
 
+def test_structured_workflow_builder_contract_preserves_order_and_dependencies(app_and_core):
+    application, core = app_and_core
+    client = application.test_client()
+    saved = client.post(
+        "/api/workflows",
+        json={
+            "name": "Ordered verification",
+            "description": "Run two bounded actions in sequence",
+            "goal": {
+                "type": "structured_plan",
+                "steps": [
+                    {
+                        "step_id": "workflow-step-1",
+                        "name": "Prepare evidence",
+                        "tool_name": "fixture.success",
+                        "input": {"message": "prepare"},
+                        "dependencies": [],
+                        "risk": "read_only",
+                    },
+                    {
+                        "step_id": "workflow-step-2",
+                        "name": "Confirm evidence",
+                        "tool_name": "fixture.success",
+                        "input": {"message": "confirm"},
+                        "dependencies": ["workflow-step-1"],
+                        "risk": "read_only",
+                    },
+                ],
+            },
+        },
+    )
+
+    assert saved.status_code == 201
+    workflow = saved.get_json()
+    assert workflow["goal"]["type"] == "structured_plan"
+    assert workflow["goal"]["steps"][1]["dependencies"] == ["workflow-step-1"]
+    assert core.store.connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+
+    started = client.post(f"/api/workflows/{workflow['id']}/run", json={})
+
+    assert started.status_code == 202
+    finished = wait_for_terminal(client, started.get_json()["task_id"])
+    assert finished["status"] == "completed"
+    assert [step["step_id"] for step in finished["plan"]] == ["workflow-step-1", "workflow-step-2"]
+    assert [step["status"] for step in finished["plan"]] == ["completed", "completed"]
+
+
 @pytest.mark.parametrize(
     ("payload", "code"),
     [

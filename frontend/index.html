@@ -212,9 +212,28 @@
                   <textarea id="workflow-description" name="workflow-description" rows="3" maxlength="2000" required placeholder="Explain when this deterministic workflow should be used."></textarea>
                 </div>
                 <div class="field-group">
+                  <label for="workflow-source">Workflow goal source</label>
+                  <select id="workflow-source" name="workflow-source">
+                    <option value="scenario">Use the selected scenario</option>
+                    <option value="ordered_plan">Build an ordered step plan</option>
+                  </select>
+                  <p class="field-help">Ordered plans use only bounded, allowlisted fixture tools and let you choose dependencies between steps.</p>
+                </div>
+                <div class="workflow-step-builder" id="workflow-step-builder" hidden>
+                  <div class="workflow-builder-header">
+                    <div>
+                      <p class="eyebrow">Structured plan</p>
+                      <h3>Ordered steps</h3>
+                    </div>
+                    <button class="secondary-button compact-button" id="add-workflow-step" type="button">Add step</button>
+                  </div>
+                  <div class="workflow-step-list" id="workflow-step-list"></div>
+                  <p class="form-status" id="workflow-builder-status" role="status">Steps are validated by the API before persistence.</p>
+                </div>
+                <div class="field-group">
                   <label for="workflow-goal-preview">Structured deterministic goal</label>
-                  <pre class="goal-preview" id="workflow-goal-preview" aria-live="polite">Loading selected scenario…</pre>
-                  <p class="field-help">This goal is derived from the currently selected scenario and message above. The API validates it before persistence.</p>
+                  <pre class="goal-preview" id="workflow-goal-preview">Loading selected scenario…</pre>
+                  <p class="field-help">The API validates this goal against registered tools, risk floors, dependencies, and verification contracts before persistence.</p>
                 </div>
                 <div class="composer-footer">
                   <p class="form-status" id="workflow-form-status" role="status"></p>

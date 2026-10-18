@@ -51,6 +51,47 @@
     },
   };
 
+  const WORKFLOW_TOOL_CATALOG = {
+    "fixture.success": {
+      label: "Verified action",
+      risk: "read_only",
+      approval: false,
+      maxAttempts: 1,
+      timeoutSeconds: 1,
+      inputKind: "message",
+      fallback: "verified workflow step",
+    },
+    "fixture.fail_once": {
+      label: "Recoverable action",
+      risk: "reversible",
+      approval: false,
+      maxAttempts: 2,
+      timeoutSeconds: 1,
+      inputKind: "key",
+      fallback: "workflow-recovery",
+    },
+    "fixture.approval": {
+      label: "Approval-gated action",
+      risk: "sensitive",
+      approval: true,
+      maxAttempts: 1,
+      timeoutSeconds: 1,
+      inputKind: "message",
+      fallback: "approved workflow step",
+    },
+    "fixture.delay": {
+      label: "Bounded delay",
+      risk: "read_only",
+      approval: false,
+      maxAttempts: 1,
+      timeoutSeconds: 1,
+      inputKind: "seconds",
+      fallback: "0.01",
+    },
+  };
+
+  const WORKFLOW_TOOL_NAMES = Object.keys(WORKFLOW_TOOL_CATALOG);
+
   const STATUS_DETAILS = {
     queued: ["Queued", "The task is persisted and waiting for a local worker."],
     planning: ["Planning", "The deterministic planner is creating the execution plan."],
@@ -102,6 +143,8 @@
     workflows: [],
     workflowBusy: null,
     workflowSaving: false,
+    workflowSource: "scenario",
+    workflowSteps: [],
     memory: [],
     memoryBusy: null,
     memorySaving: false,
@@ -1231,8 +1274,210 @@
     return { type: mode, message: detail };
   }
 
+  function newWorkflowStep(index, dependency = "") {
+    return {
+      id: `workflow-step-${index + 1}`,
+      name: `Step ${index + 1}`,
+      tool: "fixture.success",
+      value: "verified workflow step",
+      dependency,
+    };
+  }
+
+  function syncWorkflowStepsFromDom() {
+    if (state.workflowSource !== "ordered_plan" || !elements.workflowStepList) {
+      return;
+    }
+    state.workflowSteps = Array.from(elements.workflowStepList.querySelectorAll("[data-workflow-step-id]")).map((card, index) => ({
+      id: card.dataset.workflowStepId || `workflow-step-${index + 1}`,
+      name: card.querySelector(".workflow-step-name")?.value || `Step ${index + 1}`,
+      tool: card.querySelector(".workflow-step-tool")?.value || "fixture.success",
+      value: card.querySelector(".workflow-step-value")?.value || "",
+      dependency: card.querySelector(".workflow-step-dependency")?.value || "",
+    }));
+  }
+
+  function workflowValueConfig(step) {
+    return WORKFLOW_TOOL_CATALOG[step.tool] || WORKFLOW_TOOL_CATALOG["fixture.success"];
+  }
+
+  function renderWorkflowStepBuilder() {
+    const visible = state.workflowSource === "ordered_plan";
+    elements.workflowStepBuilder.hidden = !visible;
+    if (!visible) {
+      return;
+    }
+    elements.workflowStepList.replaceChildren();
+    state.workflowSteps.forEach((step, index) => {
+      const config = workflowValueConfig(step);
+      const card = document.createElement("article");
+      card.className = "workflow-step-card";
+      card.dataset.workflowStepId = step.id;
+
+      const header = document.createElement("div");
+      header.className = "workflow-step-card-header";
+      const title = document.createElement("div");
+      addText(title, "span", "step-number", `STEP ${String(index + 1).padStart(2, "0")}`);
+      addText(title, "strong", "", config.label);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "secondary-button danger-button compact-button";
+      remove.textContent = "Remove";
+      remove.disabled = state.workflowSteps.length <= 1;
+      remove.addEventListener("click", () => removeWorkflowStep(index));
+      header.append(title, remove);
+      card.append(header);
+
+      const fields = document.createElement("div");
+      fields.className = "workflow-step-fields";
+
+      const nameLabel = document.createElement("label");
+      nameLabel.textContent = "Step name";
+      const name = document.createElement("input");
+      name.className = "workflow-step-name";
+      name.type = "text";
+      name.maxLength = 100;
+      name.value = step.name;
+      nameLabel.append(name);
+      fields.append(nameLabel);
+
+      const toolLabel = document.createElement("label");
+      toolLabel.textContent = "Allowlisted tool";
+      const tool = document.createElement("select");
+      tool.className = "workflow-step-tool";
+      WORKFLOW_TOOL_NAMES.forEach((toolName) => {
+        const option = document.createElement("option");
+        option.value = toolName;
+        option.textContent = `${WORKFLOW_TOOL_CATALOG[toolName].label} · ${toolName}`;
+        option.selected = toolName === step.tool;
+        tool.append(option);
+      });
+      toolLabel.append(tool);
+      fields.append(toolLabel);
+
+      const valueLabel = document.createElement("label");
+      valueLabel.textContent = config.inputKind === "seconds" ? "Delay seconds" : config.inputKind === "key" ? "Recovery key" : "Action message";
+      const value = document.createElement("input");
+      value.className = "workflow-step-value";
+      value.type = config.inputKind === "seconds" ? "number" : "text";
+      value.maxLength = 500;
+      if (config.inputKind === "seconds") {
+        value.min = "0";
+        value.max = "5";
+        value.step = "0.01";
+      }
+      value.value = step.value || config.fallback;
+      valueLabel.append(value);
+      fields.append(valueLabel);
+
+      const dependencyLabel = document.createElement("label");
+      dependencyLabel.textContent = "Depends on";
+      const dependency = document.createElement("select");
+      dependency.className = "workflow-step-dependency";
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "No dependency";
+      dependency.append(none);
+      state.workflowSteps.slice(0, index).forEach((previous, previousIndex) => {
+        const option = document.createElement("option");
+        option.value = previous.id;
+        option.textContent = `Step ${String(previousIndex + 1).padStart(2, "0")} · ${previous.id}`;
+        option.selected = previous.id === step.dependency;
+        dependency.append(option);
+      });
+      if (!state.workflowSteps.slice(0, index).some((previous) => previous.id === step.dependency)) {
+        dependency.value = "";
+      }
+      dependencyLabel.append(dependency);
+      fields.append(dependencyLabel);
+      card.append(fields);
+
+      [name, value, dependency].forEach((control) => {
+        control.addEventListener("input", () => {
+          syncWorkflowStepsFromDom();
+          renderWorkflowGoalPreview();
+        });
+        control.addEventListener("change", () => {
+          syncWorkflowStepsFromDom();
+          if (control === tool) {
+            renderWorkflowStepBuilder();
+          }
+          renderWorkflowGoalPreview();
+        });
+      });
+      elements.workflowStepList.append(card);
+    });
+    elements.addWorkflowStep.disabled = state.workflowSteps.length >= 4;
+    elements.workflowBuilderStatus.textContent = `${state.workflowSteps.length} ordered ${state.workflowSteps.length === 1 ? "step" : "steps"}; dependencies are optional and API-validated.`;
+  }
+
+  function buildStructuredWorkflowGoal() {
+    syncWorkflowStepsFromDom();
+    return {
+      type: "structured_plan",
+      steps: state.workflowSteps.map((step, index) => {
+        const config = workflowValueConfig(step);
+        const rawValue = String(step.value || config.fallback).trim() || config.fallback;
+        const input = config.inputKind === "key"
+          ? { key: rawValue }
+          : config.inputKind === "seconds"
+            ? { seconds: Math.min(5, Math.max(0, Number.parseFloat(rawValue) || 0.01)) }
+            : { message: rawValue };
+        return {
+          step_id: step.id || `workflow-step-${index + 1}`,
+          name: String(step.name || `Step ${index + 1}`).trim() || `Step ${index + 1}`,
+          tool_name: step.tool,
+          input,
+          dependencies: step.dependency ? [step.dependency] : [],
+          risk: config.risk,
+          approval_required: config.approval,
+          max_attempts: config.maxAttempts,
+          timeout_seconds: config.timeoutSeconds,
+        };
+      }),
+    };
+  }
+
+  function resetWorkflowBuilder() {
+    state.workflowSource = "scenario";
+    state.workflowSteps = [newWorkflowStep(0)];
+    elements.workflowSource.value = "scenario";
+    renderWorkflowStepBuilder();
+  }
+
+  function addWorkflowStep() {
+    syncWorkflowStepsFromDom();
+    if (state.workflowSteps.length >= 4) {
+      return;
+    }
+    const dependency = state.workflowSteps[state.workflowSteps.length - 1]?.id || "";
+    state.workflowSteps.push(newWorkflowStep(state.workflowSteps.length, dependency));
+    renderWorkflowStepBuilder();
+    renderWorkflowGoalPreview();
+  }
+
+  function removeWorkflowStep(index) {
+    syncWorkflowStepsFromDom();
+    if (state.workflowSteps.length <= 1) {
+      return;
+    }
+    const oldSteps = state.workflowSteps.slice();
+    const removed = oldSteps[index];
+    const remaining = oldSteps.filter((_step, stepIndex) => stepIndex !== index);
+    const idMap = new Map();
+    remaining.forEach((step, stepIndex) => idMap.set(step.id, `workflow-step-${stepIndex + 1}`));
+    state.workflowSteps = remaining.map((step, stepIndex) => ({
+      ...step,
+      id: `workflow-step-${stepIndex + 1}`,
+      dependency: step.dependency === removed.id ? "" : (idMap.get(step.dependency) || ""),
+    }));
+    renderWorkflowStepBuilder();
+    renderWorkflowGoalPreview();
+  }
+
   function renderWorkflowGoalPreview() {
-    elements.workflowGoalPreview.textContent = formatData(buildGoal());
+    const goal = state.workflowSource === "ordered_plan" ? buildStructuredWorkflowGoal() : buildGoal();
+    elements.workflowGoalPreview.textContent = formatData(goal);
   }
 
   function setWorkflowStatus(message) {
@@ -1263,9 +1508,10 @@
       await postJson("/api/workflows", {
         name,
         description,
-        goal: buildGoal(),
+        goal: state.workflowSource === "ordered_plan" ? buildStructuredWorkflowGoal() : buildGoal(),
       });
       elements.workflowForm.reset();
+      resetWorkflowBuilder();
       setWorkflowFormStatus("Workflow saved. Run it explicitly from the persisted library.");
       await loadWorkflows();
     } catch (error) {
@@ -2111,6 +2357,11 @@
     elements.workflowForm = byId("workflow-form");
     elements.workflowName = byId("workflow-name");
     elements.workflowDescription = byId("workflow-description");
+    elements.workflowSource = byId("workflow-source");
+    elements.workflowStepBuilder = byId("workflow-step-builder");
+    elements.workflowStepList = byId("workflow-step-list");
+    elements.addWorkflowStep = byId("add-workflow-step");
+    elements.workflowBuilderStatus = byId("workflow-builder-status");
     elements.workflowGoalPreview = byId("workflow-goal-preview");
     elements.workflowFormStatus = byId("workflow-form-status");
     elements.saveWorkflow = byId("save-workflow");
@@ -2215,6 +2466,12 @@
     elements.voiceInput.addEventListener("click", toggleVoiceInput);
     elements.speakStatus.addEventListener("click", readLastStatus);
     elements.workflowForm.addEventListener("submit", saveWorkflow);
+    elements.workflowSource.addEventListener("change", () => {
+      state.workflowSource = elements.workflowSource.value === "ordered_plan" ? "ordered_plan" : "scenario";
+      renderWorkflowStepBuilder();
+      renderWorkflowGoalPreview();
+    });
+    elements.addWorkflowStep.addEventListener("click", addWorkflowStep);
     elements.refreshWorkflows.addEventListener("click", loadWorkflows);
     elements.measureSystem.addEventListener("click", loadSystemSnapshot);
     elements.memoryForm.addEventListener("submit", saveMemory);
@@ -2224,6 +2481,7 @@
     elements.openWorkspaceReport.addEventListener("click", openWorkspaceReport);
     elements.refreshRecentRuns.addEventListener("click", loadRecentRuns);
     updateModeHelp();
+    resetWorkflowBuilder();
     renderWorkflowGoalPreview();
     renderEmptyState();
     renderCapabilities({

@@ -146,6 +146,9 @@ def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
     assert "provider-directed goal" in script
     assert "overview-active" in dashboard
     assert "verify-provider" in dashboard
+    assert "workflow-source" in dashboard
+    assert "structured_plan" in script
+    assert "add-workflow-step" in dashboard
     assert "open-workspace-report" in script
     for section in (
         "command-center",
