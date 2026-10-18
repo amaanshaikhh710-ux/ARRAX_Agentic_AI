@@ -4,7 +4,7 @@
 
 ## Project status
 
-This repository is currently in the documentation phase. The destination repository contains no runtime implementation yet.
+This repository is currently in the documentation and configuration phases. The destination repository contains no runtime implementation yet.
 
 The application described below is the intended fresh implementation, not a claim that these features already exist. Completed work will be marked explicitly as it is added and verified.
 
@@ -47,15 +47,17 @@ Not yet implemented:
 - Authentication.
 - Production deployment.
 
-## Proposed technology baseline
+## Configured technology baseline
 
-The following is a proposed baseline for Phase 2 and is not yet implemented:
+The following foundation is now configured, but the application runtime is not yet implemented:
 
 - **Backend:** Python 3.12 or newer with Flask.
 - **Frontend:** Server-served HTML, CSS, and vanilla JavaScript.
 - **Tests:** `pytest` with mocks for external providers and unsafe tools.
 - **Persistence:** A portable local store selected after the execution model is defined.
-- **Packaging:** Pinned dependencies, a Python version declaration, and a Dockerfile suitable for offline test execution.
+- **Packaging:** Pinned dependency manifests, a Python version declaration, and a future Dockerfile suitable for offline test execution.
+
+The current dependency files are `requirements.txt`, `requirements-dev.txt`, and `requirements.lock`. The supported local interpreter is pinned in `.python-version`.
 
 The baseline may be adjusted if the implementation or buildathon rebuild constraints demonstrate a better, smaller option. No framework or external service will be added only for visual polish.
 
@@ -100,9 +102,14 @@ ARRAX_Agentic_AI/
 │   └── verification/      # execution-result verification
 ├── frontend/              # dashboard assets
 ├── tests/                 # offline unit, API, and lifecycle tests
-├── .env.example           # placeholder configuration names only
-├── Dockerfile             # reproducible build/test environment
-├── pyproject.toml         # project metadata and tool configuration
+├── .env.example           # safe empty configuration template
+├── .gitignore              # excludes secrets and runtime data
+├── Dockerfile             # future reproducible build/test environment
+├── .python-version         # supported Python version
+├── requirements.txt        # runtime dependencies
+├── requirements-dev.txt    # development/test dependencies
+├── requirements.lock       # pinned runtime and test baseline
+├── pyproject.toml         # test and tool configuration
 └── README.md
 ```
 
@@ -110,7 +117,14 @@ The structure is provisional until the first implementation slice is designed an
 
 ## Installation and setup
 
-There is no runnable installation yet because the application implementation has not started.
+There is no runnable application yet because the application implementation has not started. The repository foundation can be prepared with:
+
+```text
+python -m venv .venv
+python -m pip install -r requirements.lock
+```
+
+These commands install the configured baseline only; they do not start an application. They will be verified from a clean checkout before being treated as a completed setup path.
 
 When the first runnable slice is added, this section will contain the exact commands for:
 
@@ -124,7 +138,7 @@ Commands will be tested from a clean checkout before they are documented as work
 
 ## Environment variables
 
-No environment variables are currently required because no runtime code exists yet.
+The `.env.example` file is present as a safe template, but no environment variables are currently consumed because no runtime code exists yet.
 
 Future integrations will expose only documented variable names in `.env.example`. Real API keys, passwords, tokens, personal data, and machine-specific paths must remain outside Git.
 
@@ -150,7 +164,7 @@ The default development mode is expected to be local-only and safe. Network expo
 
 ## Testing
 
-No test suite or test command exists yet.
+The pytest configuration is present, but no test suite exists yet. Running pytest before tests are added is not a passing application check.
 
 The target is one offline command that exercises the complete safe test suite, including:
 
@@ -194,6 +208,7 @@ The current known limitations are:
 - No desktop automation adapter is available.
 - No authentication or production deployment is supported.
 - The final supported platform has not yet been validated.
+- No Dockerfile or Docker validation exists yet.
 
 These items will be removed from this list only after implementation and verification.
 

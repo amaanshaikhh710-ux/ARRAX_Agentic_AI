@@ -1,0 +1,15 @@
+# Pinned baseline for the planned Flask runtime and pytest test tooling.
+# Regenerate and validate this file with the project's resolver when dependency tooling is finalized.
+Flask==3.1.1
+Jinja2==3.1.6
+MarkupSafe==3.0.2
+Werkzeug==3.1.3
+blinker==1.9.0
+click==8.2.1
+colorama==0.4.6
+iniconfig==2.3.0
+itsdangerous==2.2.0
+packaging==26.2
+pluggy==1.6.0
+Pygments==2.20.0
+pytest==9.0.3
