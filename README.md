@@ -4,7 +4,7 @@
 
 ## Project status
 
-Milestones 1 and 2 are implemented as a small, offline deterministic agent core with a Flask API boundary. The destination repository contains the task model, planner, allowlisted fixture tools, orchestrator, SQLite persistence, bounded local workers, and pytest coverage described below.
+Milestones 1 through 3 are implemented as a small, offline deterministic agent core with a Flask API boundary and a server-served vanilla dashboard. The destination repository contains the task model, planner, allowlisted fixture tools, orchestrator, SQLite persistence, bounded local workers, frontend, and pytest coverage described below.
 
 The application is intentionally being built as a fresh implementation. Completed work is marked explicitly as it is added and verified.
 
@@ -43,11 +43,13 @@ Currently implemented:
 - Offline pytest coverage for the complete safe core flow.
 - Flask application factory with validated task, plan, approval, cancellation, health, capabilities, and event-history endpoints.
 - Bounded asynchronous task workers with an explicit application shutdown hook for tests and embedding code.
+- Responsive HTML/CSS/vanilla JavaScript dashboard served by the Flask factory, connected to the real health, capabilities, task, event, approval, and cancellation endpoints.
+- Safe DOM rendering for user and API text, persisted event timeline, plan-step evidence, approval controls, cancellation, and API/provider availability states.
 
 Not yet implemented:
 
 - Desktop automation, unrestricted shell or filesystem actions, network calls, or external APIs.
-- AI-provider integration, frontend dashboard, authentication, or production deployment.
+- Natural-language interpretation, AI-provider integration, authentication, or production deployment.
 
 ## Configured technology baseline
 
@@ -101,7 +103,11 @@ ARRAX_Agentic_AI/
 │   ├── tools.py           # allowlisted protocol and safe fixtures
 │   ├── storage.py         # SQLite repositories and schema
 │   ├── orchestrator.py    # synchronous lifecycle and policy flow
-│   └── api.py             # Flask factory, serialization, and bounded workers
+│   └── api.py             # Flask factory, serialization, workers, and dashboard serving
+├── frontend/
+│   ├── index.html         # server-served command center
+│   ├── style.css          # responsive midnight/graphite interface
+│   └── script.js          # vanilla API client and safe DOM renderer
 ├── tests/                 # offline lifecycle and boundary tests
 ├── .env.example           # safe empty configuration template
 ├── .gitignore              # excludes secrets and runtime data
@@ -114,7 +120,7 @@ ARRAX_Agentic_AI/
 └── README.md
 ```
 
-The Flask API in `api.py` is the HTTP boundary around this core. A frontend and platform-specific adapters remain future layers.
+The Flask API in `api.py` is the HTTP boundary around this core. The dashboard is served at `/` and its CSS/JavaScript assets are served below `/assets/`. Platform-specific adapters remain future layers.
 
 ## Installation and setup
 
@@ -166,6 +172,26 @@ app = create_app(db_path="arrax.sqlite")
 
 The factory does not bind a socket or create network clients. Its default mode is local and deterministic, and its default request body limit is 64 KiB. Tests can inject an existing `AgentCore` with `create_app(core=core)` and use the same shutdown hook to wait for bounded workers.
 
+To run the local dashboard with Flask's development server, keep the binding
+local and use an explicit non-debug command:
+
+PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -c "from arrax import create_app; create_app(db_path='arrax.sqlite').run(host='127.0.0.1', port=5000, debug=False)"
+```
+
+POSIX shells:
+
+```sh
+PYTHONPATH=src python -c "from arrax import create_app; create_app(db_path='arrax.sqlite').run(host='127.0.0.1', port=5000, debug=False)"
+```
+
+Open <http://127.0.0.1:5000/> after starting the command. The factory itself
+still does not bind a socket; the one-liner is the explicit local development
+entry point.
+
 Future application layers can extend this section with exact commands for:
 
 1. Selecting the supported Python version.
@@ -198,7 +224,7 @@ The project does not claim MySQL compatibility; SQLite is the deliberate local p
 
 ## Running the application
 
-Milestone 2 adds a local Flask API but no desktop runtime or production server startup. Use the synchronous `AgentCore` API or the application factory shown above, then run the offline test suite.
+Milestone 3 adds the local dashboard on top of the Flask API but no desktop runtime or production deployment. Use the application factory shown above, then run the offline test suite.
 
 The default development mode is expected to be local-only and safe. Network exposure, authentication, and any platform-specific adapters will be addressed explicitly rather than enabled by default.
 
@@ -208,6 +234,15 @@ The offline test suite is implemented and runs with:
 
 ```text
 python -m pytest -q
+```
+
+The lightweight browser-facing checks can also be run without a frontend test
+framework:
+
+```text
+node --check frontend/script.js
+python -m compileall -q src tests
+git diff --check
 ```
 
 The target is one offline command that exercises the complete safe test suite, including:
@@ -242,8 +277,9 @@ This project will not claim that a tool is successful until its completion can b
 
 The current known limitations are:
 
-- No frontend or production deployment is supported.
+- No production deployment is supported.
 - No AI provider is connected.
+- Natural-language goal interpretation is deferred; the dashboard selects one of the implemented deterministic scenarios.
 - No desktop automation adapter is available.
 - No authentication or production deployment is supported.
 - The final supported platform has not yet been validated.
@@ -256,7 +292,7 @@ These items will be removed from this list only after implementation and verific
 1. Establish the project configuration and reproducible test command. **Complete.**
 2. Implement a minimal task lifecycle with deterministic test tools. **Complete.**
 3. Add the API boundary and safe execution-status responses. **Complete.**
-4. Add a small dashboard for task input, plan review, approval, and results.
+4. Add a small dashboard for task input, plan review, approval, and results. **Complete.**
 5. Add cancellation, timeouts, and result verification. **Core behavior complete; application surfaces remain.**
 6. Add optional AI planning behind strict schema and permission validation.
 7. Add optional platform adapters only after the core workflow is tested.

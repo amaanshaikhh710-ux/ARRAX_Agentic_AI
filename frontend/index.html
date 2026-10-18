@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080b12">
+    <meta name="description" content="ARRAX deterministic local agent command center">
+    <title>ARRAX Command Center</title>
+    <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#command-center">Skip to command center</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true">A<span>/</span></div>
+          <div>
+            <p class="eyebrow">Local agent system</p>
+            <p class="brand-name">ARRAX</p>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Dashboard sections">
+          <button class="nav-item is-active" type="button" data-section-target="command-center" aria-current="page">
+            <span class="nav-index">01</span>
+            <span>Command Center</span>
+          </button>
+          <button class="nav-item" type="button" data-section-target="live-console">
+            <span class="nav-index">02</span>
+            <span>Live Console</span>
+          </button>
+          <button class="nav-item" type="button" data-section-target="security-capabilities">
+            <span class="nav-index">03</span>
+            <span>Security &amp; Capabilities</span>
+          </button>
+          <button class="nav-item" type="button" data-section-target="runbook">
+            <span class="nav-index">04</span>
+            <span>Runbook / How it works</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footnote">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <span>Local deterministic surface</span>
+        </div>
+      </aside>
+
+      <div class="main-column">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Operations interface / milestone 03</p>
+            <h1>Command Center</h1>
+          </div>
+          <div class="system-strip" aria-label="API system status">
+            <div class="system-status">
+              <span class="status-dot" id="health-dot" aria-hidden="true"></span>
+              <div>
+                <span class="system-label">API readiness</span>
+                <strong id="health-status" aria-live="polite">Checking API</strong>
+              </div>
+            </div>
+            <div class="system-detail">
+              <span id="execution-mode">Execution: checking</span>
+              <span id="provider-mode">Provider: checking</span>
+            </div>
+          </div>
+        </header>
+
+        <div class="api-notice" id="api-notice" role="status" hidden>
+          <span class="notice-mark" aria-hidden="true">!</span>
+          <p id="api-notice-text">API unavailable.</p>
+        </div>
+
+        <main>
+          <section class="section-block hero-section" id="command-center" data-section="command-center" aria-labelledby="command-title">
+            <div class="section-heading hero-heading">
+              <div>
+                <p class="eyebrow accent-eyebrow">01 / initiate a controlled run</p>
+                <h2 id="command-title">Give the deterministic core a scenario.</h2>
+                <p class="section-intro">Compose a bounded demo goal, inspect its plan, and follow persisted execution evidence as it arrives.</p>
+              </div>
+              <div class="mode-chip" aria-label="Current execution mode">
+                <span class="chip-dot" aria-hidden="true"></span>
+                <span>DETERMINISTIC LOCAL</span>
+              </div>
+            </div>
+
+            <div class="composer-layout">
+              <form class="composer-card panel" id="goal-form">
+                <div class="panel-kicker">
+                  <span class="kicker-line" aria-hidden="true"></span>
+                  <span>Scenario composer</span>
+                </div>
+                <div class="field-group">
+                  <label for="scenario-mode">Scenario mode</label>
+                  <select id="scenario-mode" name="scenario-mode">
+                    <option value="success">Verified action</option>
+                    <option value="failure_recovery">Self-healing recovery</option>
+                    <option value="approval">Approval gate</option>
+                    <option value="timeout">Timeout boundary</option>
+                  </select>
+                  <p class="field-help" id="scenario-help">Runs fixture.success and requires fixture.verify evidence before completion.</p>
+                </div>
+                <div class="field-group">
+                  <label for="scenario-context">Scenario message or key <span class="label-optional">(optional)</span></label>
+                  <textarea id="scenario-context" name="scenario-context" rows="4" maxlength="500" placeholder="e.g. Verify the local handoff"></textarea>
+                  <p class="field-help">Natural-language interpretation and provider integration are deferred. This text is adapted into the selected deterministic goal field.</p>
+                </div>
+                <div class="composer-footer">
+                  <p class="form-status" id="form-status" role="status"></p>
+                  <button class="primary-button" id="submit-task" type="submit">
+                    <span class="button-orbit" aria-hidden="true"></span>
+                    <span id="submit-label">Start controlled run</span>
+                  </button>
+                </div>
+              </form>
+
+              <aside class="principles-card panel" aria-label="Execution boundary">
+                <div class="panel-kicker">
+                  <span class="kicker-line violet-line" aria-hidden="true"></span>
+                  <span>Boundary</span>
+                </div>
+                <h3>Transparent by construction.</h3>
+                <ul class="principle-list">
+                  <li><span class="list-marker" aria-hidden="true">+</span><span>Only registered fixture tools can execute.</span></li>
+                  <li><span class="list-marker" aria-hidden="true">+</span><span>Approval is explicit for sensitive work.</span></li>
+                  <li><span class="list-marker" aria-hidden="true">+</span><span>Completion requires verification evidence.</span></li>
+                  <li><span class="list-marker" aria-hidden="true">+</span><span>Every event is read from persisted history.</span></li>
+                </ul>
+                <div class="deferred-note">
+                  <span class="deferred-label">Deferred</span>
+                  <span>AI providers, desktop automation, and unrestricted actions.</span>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="section-block console-section" id="live-console" data-section="live-console" aria-labelledby="console-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow accent-eyebrow">02 / observe the real run</p>
+                <h2 id="console-title">Live Console</h2>
+                <p class="section-intro">The task, plan, and timeline below are populated from the API. No simulated telemetry is shown.</p>
+              </div>
+              <div class="sync-label" id="sync-label" aria-live="polite">Awaiting a task</div>
+            </div>
+
+            <div class="empty-state panel" id="empty-state">
+              <div class="empty-glyph" aria-hidden="true">//</div>
+              <h3 id="empty-title">No task is being monitored.</h3>
+              <p id="empty-description">Select a deterministic scenario above to create a real task and stream its persisted events here.</p>
+            </div>
+
+            <div class="task-workspace" id="task-workspace" hidden>
+              <div class="task-overview panel">
+                <div class="task-overview-main">
+                  <div class="panel-kicker">
+                    <span class="kicker-line" aria-hidden="true"></span>
+                    <span>Active task</span>
+                  </div>
+                  <p class="task-id-label">Task ID</p>
+                  <p class="task-id" id="task-id">—</p>
+                  <p class="task-goal" id="task-goal">—</p>
+                </div>
+                <div class="task-overview-side">
+                  <span class="status-badge status-neutral" id="task-status">Queued</span>
+                  <p class="status-description" id="task-status-description">Waiting for the local worker.</p>
+                  <button class="secondary-button danger-button" id="cancel-task" type="button" hidden>Cancel task</button>
+                </div>
+              </div>
+
+              <div class="console-grid">
+                <section class="plan-panel panel" aria-labelledby="plan-title">
+                  <div class="panel-header">
+                    <div>
+                      <p class="eyebrow">Execution graph</p>
+                      <h3 id="plan-title">Plan steps</h3>
+                    </div>
+                    <span class="panel-count" id="plan-count">0 steps</span>
+                  </div>
+                  <div class="plan-list" id="plan-list"></div>
+                </section>
+
+                <section class="timeline-panel panel" aria-labelledby="timeline-title">
+                  <div class="panel-header">
+                    <div>
+                      <p class="eyebrow">Persisted event stream</p>
+                      <h3 id="timeline-title">Timeline</h3>
+                    </div>
+                    <span class="panel-count" id="event-count">0 events</span>
+                  </div>
+                  <ol class="timeline-list" id="timeline-list" aria-live="polite"></ol>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <section class="section-block capabilities-section" id="security-capabilities" data-section="security-capabilities" aria-labelledby="capabilities-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow accent-eyebrow">03 / inspect the boundary</p>
+                <h2 id="capabilities-title">Security &amp; Capabilities</h2>
+                <p class="section-intro">This inventory is loaded from <code>/api/capabilities</code>; it contains only tools registered by the injected core.</p>
+              </div>
+            </div>
+            <div class="capabilities-grid">
+              <div class="capability-panel panel">
+                <div class="panel-header">
+                  <div>
+                    <p class="eyebrow">Allowlist</p>
+                    <h3>Registered tools</h3>
+                  </div>
+                  <span class="panel-count" id="tool-count">—</span>
+                </div>
+                <ul class="tool-list" id="tool-list"></ul>
+              </div>
+              <div class="capability-panel panel capability-summary">
+                <div class="panel-kicker">
+                  <span class="kicker-line violet-line" aria-hidden="true"></span>
+                  <span>Runtime contract</span>
+                </div>
+                <dl class="capability-details">
+                  <div><dt>Execution mode</dt><dd id="capability-execution">Loading</dd></div>
+                  <div><dt>Provider mode</dt><dd id="capability-provider">Loading</dd></div>
+                  <div><dt>Approval boundary</dt><dd>Core-enforced</dd></div>
+                  <div><dt>Verification</dt><dd>Required for completion</dd></div>
+                </dl>
+                <p class="deferred-copy">External providers and platform adapters are deferred. The dashboard does not imply AI connectivity.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section-block runbook-section" id="runbook" data-section="runbook" aria-labelledby="runbook-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow accent-eyebrow">04 / understand the loop</p>
+                <h2 id="runbook-title">Runbook / How it works</h2>
+                <p class="section-intro">A concise view of the lifecycle that this local dashboard actually exercises.</p>
+              </div>
+            </div>
+            <div class="runbook-grid">
+              <article class="runbook-step panel">
+                <span class="runbook-number">01</span>
+                <h3>Compose</h3>
+                <p>The selected mode becomes a structured goal accepted by the deterministic planner. Natural-language interpretation is deferred.</p>
+              </article>
+              <article class="runbook-step panel">
+                <span class="runbook-number">02</span>
+                <h3>Plan &amp; gate</h3>
+                <p>The core creates an allowlisted plan. Sensitive fixture actions pause at <strong>awaiting approval</strong> until you approve the real step.</p>
+              </article>
+              <article class="runbook-step panel">
+                <span class="runbook-number">03</span>
+                <h3>Act &amp; recover</h3>
+                <p>Bounded tools execute locally. The recovery scenario demonstrates a failed first attempt followed by a deterministic retry.</p>
+              </article>
+              <article class="runbook-step panel">
+                <span class="runbook-number">04</span>
+                <h3>Verify &amp; close</h3>
+                <p>The verifier inspects actual action output. Completion, partial completion, failure, timeout, and cancellation remain visible in task history.</p>
+              </article>
+            </div>
+            <div class="limitations-banner panel">
+              <div>
+                <p class="eyebrow">Current limitations</p>
+                <h3>Local and deterministic by design.</h3>
+              </div>
+              <p>No authentication, external provider, desktop automation, unrestricted shell/filesystem access, or production deployment is included in this milestone.</p>
+            </div>
+          </section>
+        </main>
+
+        <footer class="site-footer">
+          <span>ARRAX / controlled local execution</span>
+          <span>Provider mode: none</span>
+        </footer>
+      </div>
+    </div>
+  </body>
+</html>

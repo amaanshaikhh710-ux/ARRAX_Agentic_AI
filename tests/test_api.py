@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
+import arrax.api as api_module
 from arrax import AgentCore, TaskStatus, create_app
 
 
@@ -73,6 +75,63 @@ def test_health_and_capabilities_report_local_deterministic_mode(client):
         "execution_mode": "deterministic_local",
         "provider_mode": "none",
     }
+
+
+def test_dashboard_and_assets_are_served_without_exposing_arbitrary_files(client):
+    dashboard = client.get("/")
+    assert dashboard.status_code == 200
+    assert dashboard.mimetype == "text/html"
+    dashboard_html = dashboard.get_data(as_text=True)
+    assert "ARRAX Command Center" in dashboard_html
+    assert "/assets/style.css" in dashboard_html
+    assert "/assets/script.js" in dashboard_html
+
+    stylesheet = client.get("/assets/style.css")
+    assert stylesheet.status_code == 200
+    assert stylesheet.mimetype == "text/css"
+    assert "--bg" in stylesheet.get_data(as_text=True)
+
+    script = client.get("/assets/script.js")
+    assert script.status_code == 200
+    assert script.mimetype in {"text/javascript", "application/javascript"}
+    assert "requestJson(\"/api/health\")" in script.get_data(as_text=True)
+
+    missing = client.get("/assets/not-a-real-asset.css")
+    assert missing.status_code == 404
+    assert missing.get_json() == {"error": {"code": "not_found", "message": "asset was not found"}}
+    assert "Traceback" not in missing.get_data(as_text=True)
+
+
+def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
+    script = (Path(__file__).parents[1] / "frontend" / "script.js").read_text(encoding="utf-8")
+
+    for path in (
+        "/api/health",
+        "/api/capabilities",
+        "/api/tasks",
+        "/api/tasks/",
+        "/events",
+        "/approve",
+        "/cancel",
+    ):
+        assert path in script
+    assert "innerHTML" not in script
+    assert "textContent" in script
+
+
+def test_missing_frontend_returns_structured_404_without_crashing(tmp_path, monkeypatch):
+    core = AgentCore(db_path=str(tmp_path / "missing-frontend.sqlite"))
+    monkeypatch.setattr(api_module, "FRONTEND_DIRECTORY", tmp_path / "not-present")
+    application = create_app(core=core, config={"TESTING": True})
+    try:
+        response = application.test_client().get("/")
+        assert response.status_code == 404
+        assert response.get_json() == {
+            "error": {"code": "not_found", "message": "dashboard is not available"}
+        }
+    finally:
+        application.extensions["arrax"]["shutdown"]()
+        core.close()
 
 
 def test_create_start_poll_and_read_event_history(client):

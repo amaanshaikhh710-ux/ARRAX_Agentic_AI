@@ -11,11 +11,12 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import math
+from pathlib import Path
 import threading
 from collections.abc import Mapping
 from typing import Any
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from .domain import DomainValidationError, PlanStep, Task, TaskStatus
@@ -28,6 +29,7 @@ DEFAULT_MAX_CONTENT_LENGTH = 64 * 1024
 DEFAULT_MAX_WORKERS = 4
 DEFAULT_MAX_QUEUE = 32
 MAX_GOAL_DEPTH = 32
+FRONTEND_DIRECTORY = Path(__file__).resolve().parents[2] / "frontend"
 
 
 class APIError(Exception):
@@ -374,6 +376,38 @@ def create_app(
     @app.errorhandler(Exception)
     def handle_unexpected_error(_error: Exception):
         return _error_response("internal_error", "internal server error", 500)
+
+    frontend_directory = FRONTEND_DIRECTORY
+
+    @app.get("/")
+    def dashboard():
+        """Serve the dashboard entry point without making the factory a server."""
+
+        index_path = frontend_directory / "index.html"
+        if not index_path.is_file():
+            return _error_response("not_found", "dashboard is not available", 404)
+        return send_from_directory(str(frontend_directory), "index.html")
+
+    @app.get("/assets/<path:filename>")
+    def frontend_asset(filename: str):
+        """Serve only files below the repository's frontend directory.
+
+        ``send_from_directory`` rejects traversal outside the directory.  The
+        explicit file and extension checks keep this route scoped to the
+        dashboard's browser assets rather than turning it into a general file
+        server.
+        """
+
+        requested = Path(filename)
+        allowed_extensions = {".css", ".js"}
+        if (
+            requested.is_absolute()
+            or ".." in requested.parts
+            or requested.suffix.lower() not in allowed_extensions
+            or not (frontend_directory / requested).is_file()
+        ):
+            return _error_response("not_found", "asset was not found", 404)
+        return send_from_directory(str(frontend_directory), filename)
 
     @app.get("/api/health")
     def health():
