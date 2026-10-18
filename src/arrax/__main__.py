@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 
 from .api import create_app
 from .provider import GeminiProvider, ProviderConfig, ProviderConfigError
 
 
+def _validate_local_host(host: str) -> None:
+    """Keep the unauthenticated development control plane loopback-only."""
+
+    if host.casefold() == "localhost":
+        return
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise SystemExit("ARRAX_HOST must be localhost or a loopback IP; ARRAX has no remote auth yet") from exc
+    if not address.is_loopback:
+        raise SystemExit("ARRAX_HOST must be localhost or a loopback IP; ARRAX has no remote auth yet")
+
+
 def main() -> None:
     """Start the dashboard on localhost without debug or reloader mode."""
 
     host = os.getenv("ARRAX_HOST", "127.0.0.1")
+    _validate_local_host(host)
     try:
         port = int(os.getenv("ARRAX_PORT", "5000"))
     except ValueError as exc:

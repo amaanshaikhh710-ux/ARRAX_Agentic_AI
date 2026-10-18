@@ -180,6 +180,35 @@ def test_structured_plan_honors_dependencies_and_risk(core):
     assert started_steps == ["first", "second"]
 
 
+def test_cyclic_plan_is_rejected_before_step_persistence_or_execution(core):
+    task = core.create_task(
+        {
+            "type": "structured_plan",
+            "steps": [
+                {
+                    "id": "first",
+                    "tool": "fixture.success",
+                    "input": {"message": "first"},
+                    "dependencies": ["second"],
+                },
+                {
+                    "id": "second",
+                    "tool": "fixture.success",
+                    "input": {"message": "second"},
+                    "dependencies": ["first"],
+                },
+            ],
+        }
+    )
+
+    assert task.status is TaskStatus.FAILED
+    assert task.error == "plan dependencies contain a cycle"
+    assert task.plan == ()
+    assert core.store.steps.list(task.id) == []
+    assert not any(event.event_type == "tool.started" for event in core.get_events(task.id))
+    assert core.get_events(task.id)[-1].event_type == "task.failed"
+
+
 def test_failed_independent_step_produces_partial_completion(core):
     task = core.create_task(
         {

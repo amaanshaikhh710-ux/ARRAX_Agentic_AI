@@ -8,11 +8,30 @@
     "cancelled",
   ]);
   const POLL_INTERVAL_MS = 650;
+  const POLL_RETRY_LIMIT = 4;
+  const POLL_RETRY_BASE_MS = 450;
+  const MAX_RECENT_RUNS = 8;
+  const CURRENT_TASK_STORAGE_KEY = "arrax.currentTaskId";
+  const SECTION_IDS = [
+    "command-center",
+    "automation-studio",
+    "developer-intelligence",
+    "live-console",
+    "system-intelligence",
+    "memory-center",
+    "evaluation-lab",
+    "security-capabilities",
+    "runbook",
+  ];
 
   const MODE_DETAILS = {
     success: {
       help: "Runs fixture.success and requires fixture.verify evidence before completion.",
       fallback: "verified local action",
+    },
+    ai_goal: {
+      help: "Sends the bounded natural-language goal to a verified Gemini planner. The backend still enforces registered tools, approvals, timeouts, and verification.",
+      fallback: "Describe the controlled outcome you want ARRAX to plan",
     },
     failure_recovery: {
       help: "Runs fixture.fail_once, records the injected failure, and retries within the plan limit.",
@@ -86,6 +105,11 @@
     memory: [],
     memoryBusy: null,
     memorySaving: false,
+    recentRuns: [],
+    recentRunsLoading: false,
+    overviewLoading: false,
+    providerVerifying: false,
+    providerVerified: false,
     systemSnapshotLoading: false,
     voice: {
       recognition: null,
@@ -210,14 +234,20 @@
         headers.set("Content-Type", "application/json");
       }
       response = await fetch(path, { ...options, headers });
-    } catch (_error) {
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       throw new ApiRequestError("The API could not be reached. Start the local Flask app and retry.");
     }
 
     let data = null;
     try {
       data = await response.json();
-    } catch (_error) {
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       data = null;
     }
     if (!response.ok) {
@@ -266,39 +296,95 @@
     return "Deterministic fallback";
   }
 
+  function executionDisplay(mode) {
+    const normalized = String(mode || "").trim().toLowerCase();
+    const labels = {
+      deterministic_local: "Deterministic local",
+      deterministic: "Deterministic",
+      unavailable: "Unavailable",
+    };
+    if (labels[normalized]) {
+      return labels[normalized];
+    }
+    return normalized
+      ? normalized.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+      : "Unavailable";
+  }
+
+  function healthDisplay(status, ready) {
+    if (ready) {
+      return "Ready";
+    }
+    const normalized = typeof status === "string" ? status.trim().toLowerCase() : "";
+    if (!normalized) {
+      return "Unavailable";
+    }
+    return normalized.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  function renderExecutionLabels(mode) {
+    const label = executionDisplay(mode);
+    elements.executionMode.textContent = `Execution: ${label}`;
+    elements.modeChipLabel.textContent = label.toUpperCase();
+    elements.capabilityExecution.textContent = label;
+  }
+
   function renderProviderLabels(status) {
     const label = providerDisplay(status);
     elements.providerMode.textContent = `Provider: ${label}`;
     elements.capabilityProvider.textContent = label;
-    elements.modeChipLabel.textContent = label.toUpperCase();
     elements.footerProviderStatus.textContent = `Provider status: ${label}`;
+  }
+
+  function renderProviderVerification(status) {
+    const providerStatus = status || {};
+    state.providerVerified = providerStatus.verified === true;
+    const aiGoalOption = elements.scenarioMode.querySelector('option[value="ai_goal"]');
+    if (aiGoalOption) {
+      aiGoalOption.disabled = !state.providerVerified;
+      aiGoalOption.title = state.providerVerified
+        ? "Uses the verified server-side Gemini planner; execution remains core-enforced."
+        : "Verify the provider in Security & Capabilities before using this mode.";
+      if (!state.providerVerified && elements.scenarioMode.value === "ai_goal") {
+        elements.scenarioMode.value = "success";
+      }
+    }
+    elements.capabilityProviderModel.textContent = displayValue(providerStatus.model, "unavailable");
+    elements.capabilityProviderVerification.textContent = providerStatus.verified === true
+      ? "Verified by backend"
+      : displayValue(providerStatus.message, "Not verified");
+    elements.providerActionStatus.textContent = providerStatus.verified === true
+      ? "Live provider verified by the backend canary."
+      : displayValue(providerStatus.message, "Live provider is not verified.");
   }
 
   function renderHealth(health) {
     const ready = health && health.ready === true && health.status === "ready";
     const providerStatus = health?.provider_status || {};
     state.healthReady = ready;
-    elements.healthStatus.textContent = ready ? "Ready" : "Unavailable";
+    elements.healthStatus.textContent = healthDisplay(health?.status, ready);
+    elements.healthDot.classList.remove("is-checking");
+    elements.healthDot.classList.toggle("is-ready", ready);
     elements.healthDot.classList.toggle("is-unavailable", !ready);
-    elements.executionMode.textContent = `Execution: ${displayValue(health?.execution_mode, "unavailable")}`;
+    renderExecutionLabels(health?.execution_mode);
     renderProviderLabels(providerStatus);
-    elements.capabilityProviderModel.textContent = displayValue(providerStatus.model, "unavailable");
-    elements.capabilityProviderVerification.textContent = providerStatus.verified === true
-      ? "Verified by backend"
-      : displayValue(providerStatus.message, "Not verified");
+    renderProviderVerification(providerStatus);
     if (ready) {
       setApiNotice("");
     }
   }
 
   function renderHealthFailure(error) {
+    if (isAbortError(error)) {
+      return;
+    }
     state.healthReady = false;
     elements.healthStatus.textContent = "Unavailable";
+    elements.healthDot.classList.remove("is-checking", "is-ready");
     elements.healthDot.classList.add("is-unavailable");
-    elements.executionMode.textContent = "Execution: unavailable";
+    renderExecutionLabels("unavailable");
     renderProviderLabels(null);
-    elements.capabilityProviderModel.textContent = "unavailable";
-    elements.capabilityProviderVerification.textContent = "unavailable";
+    renderProviderVerification(null);
     setApiNotice(error.message || "The API is unavailable.");
   }
 
@@ -317,18 +403,32 @@
         elements.scenarioMode.value = "success";
       }
     }
+    const workspaceTools = tools.filter((tool) => typeof tool === "string" && tool.startsWith("workspace."));
+    elements.developerToolList.replaceChildren();
+    elements.developerToolCount.textContent = workspaceTools.length
+      ? `${workspaceTools.length} registered`
+      : "Unavailable";
+    elements.developerWorkspaceStatus.textContent = state.workspaceAvailable
+      ? "Approved workspace available"
+      : "Approved workspace unavailable";
+    elements.openWorkspaceReport.disabled = !state.workspaceAvailable;
+    elements.developerActionStatus.textContent = state.workspaceAvailable
+      ? "Ready to compose the bounded report workflow."
+      : "Configure ARRAX_WORKSPACE_ROOT and restart the API to enable this flow.";
+    if (!workspaceTools.length) {
+      addText(elements.developerToolList, "li", "tool-empty", "No workspace tools registered by the API.");
+    } else {
+      workspaceTools.forEach((tool) => addText(elements.developerToolList, "li", "", tool));
+    }
     elements.toolList.replaceChildren();
     elements.toolCount.textContent = `${tools.length} registered`;
-    elements.capabilityExecution.textContent = displayValue(capabilities?.execution_mode, "unavailable");
+    renderExecutionLabels(capabilities?.execution_mode);
     const providerStatus = capabilities?.provider_status || {};
     renderProviderLabels(providerStatus);
-    elements.capabilityProviderModel.textContent = displayValue(
-      capabilities?.configured_model || providerStatus.model,
-      "unavailable",
-    );
-    elements.capabilityProviderVerification.textContent = providerStatus.verified === true
-      ? "Verified by backend"
-      : displayValue(providerStatus.message, "Not verified");
+    renderProviderVerification({
+      ...providerStatus,
+      model: capabilities?.configured_model || providerStatus.model,
+    });
     if (!tools.length) {
       addText(elements.toolList, "li", "tool-empty", "No registered tools reported by the API.");
       return;
@@ -339,6 +439,9 @@
   }
 
   function renderCapabilitiesFailure(error) {
+    if (isAbortError(error)) {
+      return;
+    }
     state.workspaceAvailable = false;
     const workspaceOption = elements.scenarioMode.querySelector('option[value="workspace_report"]');
     if (workspaceOption) {
@@ -347,12 +450,206 @@
     elements.toolList.replaceChildren();
     addText(elements.toolList, "li", "tool-empty", "Capabilities unavailable.");
     elements.toolCount.textContent = "Unavailable";
-    elements.capabilityExecution.textContent = "unavailable";
+    elements.developerToolList.replaceChildren();
+    elements.developerToolCount.textContent = "Unavailable";
+    elements.developerWorkspaceStatus.textContent = "Workspace capability unavailable";
+    elements.openWorkspaceReport.disabled = true;
+    elements.developerActionStatus.textContent = "The capabilities endpoint could not be reached.";
+    renderExecutionLabels("unavailable");
     renderProviderLabels(null);
-    elements.capabilityProviderModel.textContent = "unavailable";
-    elements.capabilityProviderVerification.textContent = "unavailable";
+    renderProviderVerification(null);
     if (!state.healthReady) {
       setApiNotice(error.message || "The API is unavailable.");
+    }
+  }
+
+  function renderTaskOverview(documentValue) {
+    const overview = documentValue?.overview && typeof documentValue.overview === "object"
+      ? documentValue.overview
+      : documentValue;
+    const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const active = number(overview?.active);
+    const completed = number(overview?.completed);
+    const failed = number(overview?.failed);
+    const partial = number(overview?.partially_completed);
+    const recovery = number(overview?.recovery_event_count);
+    const total = number(overview?.total);
+    elements.overviewActive.textContent = String(active);
+    elements.overviewCompleted.textContent = String(completed);
+    elements.overviewFailed.textContent = String(failed + partial);
+    elements.overviewRecovery.textContent = String(recovery);
+    elements.overviewTotal.textContent = String(total);
+    elements.overviewActiveDetail.textContent = number(overview?.awaiting_approval) > 0
+      ? `${number(overview.awaiting_approval)} awaiting approval`
+      : "Queued and executing task records";
+    elements.overviewFailedDetail.textContent = partial > 0
+      ? `${failed} failed · ${partial} partially completed`
+      : `${failed} failed · no partial completions`;
+    elements.overviewLastUpdated.textContent = overview?.last_updated_at
+      ? `Updated ${overview.last_updated_at}`
+      : "No persisted task updates yet";
+    elements.overviewSyncLabel.textContent = `${total} persisted ${total === 1 ? "run" : "runs"} measured`;
+  }
+
+  function renderTaskOverviewFailure(error) {
+    if (isAbortError(error)) {
+      return;
+    }
+    [elements.overviewActive, elements.overviewCompleted, elements.overviewFailed, elements.overviewRecovery, elements.overviewTotal]
+      .forEach((node) => { node.textContent = "—"; });
+    elements.overviewActiveDetail.textContent = "Task aggregates unavailable";
+    elements.overviewFailedDetail.textContent = "Task aggregates unavailable";
+    elements.overviewLastUpdated.textContent = "Last update unavailable";
+    elements.overviewSyncLabel.textContent = error?.message || "Task aggregates unavailable";
+  }
+
+  async function verifyProvider() {
+    if (state.providerVerifying) {
+      return;
+    }
+    state.providerVerifying = true;
+    elements.verifyProvider.disabled = true;
+    elements.verifyProviderLabel.textContent = "Verifying…";
+    elements.providerActionStatus.textContent = "Requesting an explicit backend provider verification…";
+    setApiNotice("");
+    try {
+      const status = await requestJson("/api/provider/status?verify=1");
+      renderProviderLabels(status);
+      renderProviderVerification(status);
+      if (status?.verified === true) {
+        setApiNotice("");
+      }
+    } catch (error) {
+      if (!isAbortError(error)) {
+        elements.providerActionStatus.textContent = error?.message || "Provider verification failed.";
+        setApiNotice(error?.message || "Provider verification failed.");
+      }
+    } finally {
+      state.providerVerifying = false;
+      elements.verifyProvider.disabled = false;
+      elements.verifyProviderLabel.textContent = "Verify live provider";
+    }
+  }
+
+  function openWorkspaceReport() {
+    if (!state.workspaceAvailable) {
+      elements.developerActionStatus.textContent = "Workspace reporting is unavailable until the backend exposes approved workspace tools.";
+      return;
+    }
+    elements.scenarioMode.value = "workspace_report";
+    updateModeHelp();
+    renderWorkflowGoalPreview();
+    setFormStatus("Workspace report mode selected. Review the bounded plan, then start the controlled run.");
+    scrollToSection("command-center");
+    elements.scenarioContext.focus();
+  }
+
+  function setRecentRunsState(stateName) {
+    elements.recentRunsLoading.hidden = stateName !== "loading";
+    elements.recentRunsEmpty.hidden = stateName !== "empty";
+    elements.recentRunsUnavailable.hidden = stateName !== "unavailable";
+    elements.recentRunsList.hidden = stateName !== "ready";
+  }
+
+  function recentTasksFromDocument(documentValue) {
+    if (Array.isArray(documentValue)) {
+      return documentValue;
+    }
+    if (Array.isArray(documentValue?.tasks)) {
+      return documentValue.tasks;
+    }
+    if (Array.isArray(documentValue?.items)) {
+      return documentValue.items;
+    }
+    return [];
+  }
+
+  function recentRunSummary(task) {
+    const goal = task?.goal;
+    if (goal && typeof goal === "object") {
+      return displayValue(goal.message || goal.key || goal.type, "Structured task");
+    }
+    return "Structured task";
+  }
+
+  function renderRecentRuns(documentValue) {
+    const tasks = recentTasksFromDocument(documentValue)
+      .filter((task) => task && typeof task.task_id === "string" && task.task_id.trim())
+      .slice(0, MAX_RECENT_RUNS);
+    state.recentRuns = tasks;
+    elements.recentRunsList.replaceChildren();
+    elements.recentRunsCount.textContent = `${tasks.length} ${tasks.length === 1 ? "run" : "runs"}`;
+    if (!tasks.length) {
+      setRecentRunsState("empty");
+      return;
+    }
+
+    tasks.forEach((task) => {
+      const item = document.createElement("li");
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "recent-run-item";
+      open.setAttribute("aria-label", `Open run ${task.task_id}`);
+      const main = document.createElement("span");
+      main.className = "recent-run-main";
+      addText(main, "strong", "recent-run-summary", recentRunSummary(task));
+      addText(main, "span", "recent-run-id", task.task_id);
+      addText(main, "time", "recent-run-time", task.updated_at || task.created_at);
+      const status = document.createElement("span");
+      setStatusBadge(status, task.status);
+      open.append(main, status);
+      open.addEventListener("click", () => {
+        void restoreTask(task.task_id, { scroll: true, source: "recent-runs" });
+      });
+      item.append(open);
+      elements.recentRunsList.append(item);
+    });
+    setRecentRunsState("ready");
+  }
+
+  function renderRecentRunsUnavailable(message) {
+    state.recentRuns = [];
+    elements.recentRunsList.replaceChildren();
+    elements.recentRunsCount.textContent = "Unavailable";
+    elements.recentRunsUnavailableMessage.textContent = message || "The task index is not available in this API version.";
+    setRecentRunsState("unavailable");
+  }
+
+  async function loadRecentRuns() {
+    if (state.recentRunsLoading) {
+      return;
+    }
+    state.recentRunsLoading = true;
+    const controller = replaceController("recentRuns");
+    elements.recentRunsCount.textContent = "Loading";
+    setRecentRunsState("loading");
+    try {
+      let documentValue;
+      try {
+        documentValue = await requestJson("/api/tasks/history?limit=8", { signal: controller.signal });
+      } catch (error) {
+        const historyUnavailable = error?.status === 404 || error?.status === 405 || error?.status === 501;
+        if (!historyUnavailable) {
+          throw error;
+        }
+        documentValue = await requestJson("/api/tasks?limit=8", { signal: controller.signal });
+      }
+      if (state.controllers.recentRuns !== controller) {
+        return;
+      }
+      renderRecentRuns(documentValue);
+    } catch (error) {
+      if (isAbortError(error) || state.controllers.recentRuns !== controller) {
+        return;
+      }
+      const unavailable = error?.status === 404 || error?.status === 405 || error?.status === 501;
+      renderRecentRunsUnavailable(unavailable
+        ? "Recent runs are not available from this API version yet."
+        : (error?.message || "Recent runs could not be loaded."));
+    } finally {
+      if (state.controllers.recentRuns === controller) {
+        state.recentRunsLoading = false;
+      }
     }
   }
 
@@ -427,6 +724,9 @@
   }
 
   function renderEvaluationCatalogFailure(error) {
+    if (isAbortError(error)) {
+      return;
+    }
     state.evaluationCatalog = [];
     elements.evaluationScenarioSelect.replaceChildren();
     elements.evaluationScenarioSelect.disabled = true;
@@ -524,6 +824,7 @@
       requestJson("/api/system/capabilities"),
       requestJson("/api/workflows"),
       requestJson("/api/memory"),
+      requestJson("/api/tasks/overview"),
     ]);
     if (results[0].status === "fulfilled") {
       renderHealth(results[0].value);
@@ -563,6 +864,11 @@
     } else {
       renderMemoryFailure(results[6].reason);
     }
+    if (results[7].status === "fulfilled") {
+      renderTaskOverview(results[7].value);
+    } else {
+      renderTaskOverviewFailure(results[7].reason);
+    }
   }
 
   function setWorkflowState(stateName) {
@@ -572,6 +878,9 @@
   }
 
   function renderWorkflowFailure(error) {
+    if (isAbortError(error)) {
+      return;
+    }
     state.workflows = [];
     elements.workflowList.replaceChildren();
     elements.workflowErrorMessage.textContent = error?.message || "Workflows are unavailable.";
@@ -663,6 +972,9 @@
   }
 
   function renderSystemCapabilitiesFailure(error) {
+    if (isAbortError(error)) {
+      return;
+    }
     elements.systemCapabilitySummary.textContent = "Measurement capabilities unavailable.";
     elements.systemCapabilityList.replaceChildren();
     addText(elements.systemCapabilityList, "dd", "metric-unavailable", error?.message || "The capability endpoint could not be reached.");
@@ -839,6 +1151,9 @@
   }
 
   function renderMemoryFailure(error) {
+    if (isAbortError(error)) {
+      return;
+    }
     state.memory = [];
     elements.memoryList.replaceChildren();
     elements.memoryErrorMessage.textContent = error?.message || "Memory is unavailable.";
@@ -929,6 +1244,10 @@
     if (state.workflowSaving) {
       return;
     }
+    if (elements.scenarioMode.value === "ai_goal") {
+      setWorkflowFormStatus("Provider-directed goals are run-only. Choose a deterministic scenario before saving a reusable workflow.");
+      return;
+    }
     const name = elements.workflowName.value.trim();
     const description = elements.workflowDescription.value.trim();
     if (!name || !description) {
@@ -960,12 +1279,7 @@
     }
   }
 
-  function scrollToSection(sectionId) {
-    const section = byId(sectionId);
-    if (!section) {
-      return;
-    }
-    section.scrollIntoView({ behavior: isReducedMotion() ? "auto" : "smooth", block: "start" });
+  function setActiveNavigation(sectionId) {
     document.querySelectorAll("[data-section-target]").forEach((item) => {
       const active = item.dataset.sectionTarget === sectionId;
       item.classList.toggle("is-active", active);
@@ -975,6 +1289,36 @@
         item.removeAttribute("aria-current");
       }
     });
+  }
+
+  function sectionFromHash() {
+    const candidate = window.location.hash.replace(/^#/, "");
+    return SECTION_IDS.includes(candidate) ? candidate : null;
+  }
+
+  function updateSectionLocation(sectionId, replace = false) {
+    if (!window.history?.replaceState) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.hash = sectionId;
+    const method = replace ? "replaceState" : "pushState";
+    window.history[method]({}, "", url);
+  }
+
+  function scrollToSection(sectionId, { updateLocation = true, replaceLocation = false, behavior } = {}) {
+    const section = byId(sectionId);
+    if (!section) {
+      return;
+    }
+    section.scrollIntoView({
+      behavior: behavior || (isReducedMotion() ? "auto" : "smooth"),
+      block: "start",
+    });
+    setActiveNavigation(sectionId);
+    if (updateLocation) {
+      updateSectionLocation(sectionId, replaceLocation);
+    }
   }
 
   async function runWorkflow(workflow) {
@@ -996,6 +1340,7 @@
       renderTimeline([]);
       setWorkflowFormStatus("Workflow run created. The Live Console is monitoring the persisted task.");
       scrollToSection("live-console");
+      void loadRecentRuns();
       void pollTask(task.task_id);
     } catch (error) {
       setWorkflowFormStatus(error?.message || "The workflow could not be run.");
@@ -1237,6 +1582,154 @@
     }
   }
 
+  function normalizeTaskId(value) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    let candidate = String(value).trim();
+    try {
+      candidate = decodeURIComponent(candidate);
+    } catch (_error) {
+      return null;
+    }
+    return candidate && candidate.length <= 256 ? candidate : null;
+  }
+
+  function readStoredTaskId() {
+    try {
+      return normalizeTaskId(window.localStorage.getItem(CURRENT_TASK_STORAGE_KEY));
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function storedTaskId(taskId) {
+    try {
+      if (taskId) {
+        window.localStorage.setItem(CURRENT_TASK_STORAGE_KEY, taskId);
+      } else {
+        window.localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
+      }
+    } catch (_error) {
+      // Browser storage can be disabled; the API-backed console still works.
+    }
+  }
+
+  function taskIdFromHash() {
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) {
+      return null;
+    }
+    const queryStart = hash.indexOf("?");
+    if (queryStart >= 0) {
+      const hashParams = new URLSearchParams(hash.slice(queryStart + 1));
+      for (const name of ["task", "task_id", "taskId"]) {
+        const value = normalizeTaskId(hashParams.get(name));
+        if (value) {
+          return value;
+        }
+      }
+    }
+    const match = hash.match(/^task(?:[_-]?id)?(?:=|\/|:)(.+)$/i);
+    return normalizeTaskId(match ? match[1] : null);
+  }
+
+  function taskIdFromLocation() {
+    const params = new URLSearchParams(window.location.search);
+    for (const name of ["task", "task_id", "taskId"]) {
+      const value = normalizeTaskId(params.get(name));
+      if (value) {
+        return value;
+      }
+    }
+    return taskIdFromHash();
+  }
+
+  function updateTaskLocation(taskId) {
+    if (!window.history?.replaceState) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("task_id");
+    url.searchParams.delete("taskId");
+    url.searchParams.set("task", taskId);
+    if (taskIdFromHash()) {
+      url.hash = "live-console";
+    }
+    window.history.replaceState({}, "", url);
+  }
+
+  function clearTaskLocation(taskId) {
+    if (!window.history?.replaceState) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    const current = taskIdFromLocation();
+    if (taskId && current && current !== taskId) {
+      return;
+    }
+    url.searchParams.delete("task");
+    url.searchParams.delete("task_id");
+    url.searchParams.delete("taskId");
+    if (taskIdFromHash()) {
+      url.hash = "live-console";
+    }
+    window.history.replaceState({}, "", url);
+  }
+
+  async function restoreTask(taskId, { scroll = false, source = "saved state" } = {}) {
+    const normalizedTaskId = normalizeTaskId(taskId);
+    if (!normalizedTaskId) {
+      return null;
+    }
+    stopPolling();
+    const controller = replaceController("taskRestore");
+    elements.syncLabel.textContent = "Restoring persisted task";
+    try {
+      const [task, eventDocument] = await Promise.all([
+        requestJson(`/api/tasks/${encodeURIComponent(normalizedTaskId)}`, { signal: controller.signal }),
+        requestJson(`/api/tasks/${encodeURIComponent(normalizedTaskId)}/events`, { signal: controller.signal }),
+      ]);
+      if (state.controllers.taskRestore !== controller) {
+        return null;
+      }
+      state.events = Array.isArray(eventDocument?.events) ? eventDocument.events : [];
+      storedTaskId(task.task_id || normalizedTaskId);
+      updateTaskLocation(task.task_id || normalizedTaskId);
+      renderTask(task);
+      renderTimeline(state.events);
+      setFormStatus(`Restored task ${displayValue(task.task_id || normalizedTaskId)} from ${source}.`);
+      if (scroll) {
+        scrollToSection("live-console");
+      }
+      if (!isTerminal(task.status)) {
+        void pollTask(task.task_id || normalizedTaskId);
+      }
+      return task;
+    } catch (error) {
+      if (isAbortError(error) || state.controllers.taskRestore !== controller) {
+        return null;
+      }
+      if (error?.code === "task_not_found") {
+        storedTaskId(null);
+        clearTaskLocation(normalizedTaskId);
+        if (!state.task || state.task.task_id === normalizedTaskId) {
+          state.task = null;
+          state.events = [];
+          renderEmptyState();
+          renderTimeline([]);
+        }
+        elements.syncLabel.textContent = "Saved task unavailable";
+        setFormStatus("The saved task is no longer available in the API.");
+      } else {
+        elements.syncLabel.textContent = "Task restore failed";
+        setFormStatus(error?.message || "The saved task could not be restored.");
+        setApiNotice(error?.message || "The saved task could not be restored.");
+      }
+      return null;
+    }
+  }
+
   function renderEmptyState() {
     elements.emptyState.hidden = false;
     elements.taskWorkspace.hidden = true;
@@ -1351,6 +1844,10 @@
       return;
     }
     state.task = task;
+    if (task.task_id) {
+      storedTaskId(task.task_id);
+      updateTaskLocation(task.task_id);
+    }
     elements.emptyState.hidden = true;
     elements.taskWorkspace.hidden = false;
     elements.taskId.textContent = displayValue(task.task_id);
@@ -1358,6 +1855,7 @@
     setStatusBadge(elements.taskStatus, task.status);
     elements.taskStatusDescription.textContent = statusDescription(task.status);
     elements.cancelTask.hidden = isTerminal(task.status);
+    elements.refreshTask.hidden = isTerminal(task.status);
     elements.cancelTask.disabled = state.actionPending;
     elements.cancelTask.textContent = state.actionPending ? "Updating task…" : "Cancel task";
     elements.syncLabel.textContent = isTerminal(task.status) ? "Terminal state" : "Polling API state";
@@ -1390,26 +1888,42 @@
     const controller = new AbortController();
     const pollRun = { taskId, controller };
     state.polling = pollRun;
+    let consecutiveFailures = 0;
     try {
       while (state.polling === pollRun) {
-        const [task, eventDocument] = await Promise.all([
-          requestJson(`/api/tasks/${encodeURIComponent(taskId)}`, { signal: controller.signal }),
-          requestJson(`/api/tasks/${encodeURIComponent(taskId)}/events`, { signal: controller.signal }),
-        ]);
-        if (state.polling !== pollRun) {
-          return;
+        try {
+          const [task, eventDocument] = await Promise.all([
+            requestJson(`/api/tasks/${encodeURIComponent(taskId)}`, { signal: controller.signal }),
+            requestJson(`/api/tasks/${encodeURIComponent(taskId)}/events`, { signal: controller.signal }),
+          ]);
+          if (state.polling !== pollRun) {
+            return;
+          }
+          consecutiveFailures = 0;
+          state.events = Array.isArray(eventDocument?.events) ? eventDocument.events : [];
+          renderTask(task);
+          renderTimeline(state.events);
+          if (isTerminal(task.status)) {
+            void loadRecentRuns();
+            return;
+          }
+          await delay(POLL_INTERVAL_MS, controller.signal);
+        } catch (error) {
+          if (isAbortError(error)) {
+            throw error;
+          }
+          consecutiveFailures += 1;
+          if (consecutiveFailures > POLL_RETRY_LIMIT) {
+            throw error;
+          }
+          elements.syncLabel.textContent = `Connection interrupted · retry ${consecutiveFailures}/${POLL_RETRY_LIMIT}`;
+          await delay(POLL_RETRY_BASE_MS * consecutiveFailures, controller.signal);
         }
-        state.events = Array.isArray(eventDocument?.events) ? eventDocument.events : [];
-        renderTask(task);
-        renderTimeline(state.events);
-        if (isTerminal(task.status)) {
-          return;
-        }
-        await delay(POLL_INTERVAL_MS, controller.signal);
       }
     } catch (error) {
       if (!isAbortError(error) && state.polling === pollRun) {
         elements.syncLabel.textContent = "Polling stopped";
+        elements.refreshTask.hidden = false;
         setApiNotice(error.message || "The task could not be refreshed.");
       }
     } finally {
@@ -1432,6 +1946,10 @@
       setFormStatus("Workspace reporting requires an API configured with ARRAX_WORKSPACE_ROOT.");
       return;
     }
+    if (elements.scenarioMode.value === "ai_goal" && !state.providerVerified) {
+      setFormStatus("Verify the Gemini provider before submitting a provider-directed goal.");
+      return;
+    }
 
     state.submitting = true;
     stopPolling();
@@ -1445,6 +1963,7 @@
       renderTask(task);
       renderTimeline([]);
       setFormStatus(`Task ${displayValue(task.task_id)} created.`);
+      void loadRecentRuns();
       void pollTask(task.task_id);
     } catch (error) {
       setFormStatus(error.message || "The task could not be created.");
@@ -1505,22 +2024,45 @@
   function connectNavigation() {
     document.querySelectorAll("[data-section-target]").forEach((button) => {
       button.addEventListener("click", () => {
-        const section = byId(button.dataset.sectionTarget);
-        if (!section) {
-          return;
-        }
-        section.scrollIntoView({ behavior: isReducedMotion() ? "auto" : "smooth", block: "start" });
-        document.querySelectorAll("[data-section-target]").forEach((item) => {
-          const active = item === button;
-          item.classList.toggle("is-active", active);
-          if (active) {
-            item.setAttribute("aria-current", "page");
-          } else {
-            item.removeAttribute("aria-current");
-          }
-        });
+        scrollToSection(button.dataset.sectionTarget);
       });
     });
+
+    const sections = SECTION_IDS.map((id) => byId(id)).filter(Boolean);
+    if (typeof window.IntersectionObserver === "function") {
+      const observer = new window.IntersectionObserver((entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => left.boundingClientRect.top - right.boundingClientRect.top);
+        const section = visible[0]?.target;
+        if (section?.id) {
+          setActiveNavigation(section.id);
+          updateSectionLocation(section.id, true);
+        }
+      }, {
+        rootMargin: "-18% 0px -68% 0px",
+        threshold: [0, 0.2],
+      });
+      sections.forEach((section) => observer.observe(section));
+    }
+
+    const handleLocationChange = () => {
+      const sectionId = sectionFromHash();
+      if (sectionId) {
+        scrollToSection(sectionId, { updateLocation: false, behavior: "auto" });
+      }
+      const taskIdFromUrl = taskIdFromLocation();
+      const taskId = taskIdFromUrl || readStoredTaskId();
+      if (taskId && taskId !== state.task?.task_id) {
+        void restoreTask(taskId, {
+          scroll: !sectionId,
+          source: taskIdFromUrl ? "URL state" : "local browser state",
+        });
+      }
+    };
+    window.addEventListener("hashchange", handleLocationChange);
+    window.addEventListener("popstate", handleLocationChange);
+    handleLocationChange();
   }
 
   function cacheElements() {
@@ -1553,7 +2095,15 @@
     elements.taskGoal = byId("task-goal");
     elements.taskStatus = byId("task-status");
     elements.taskStatusDescription = byId("task-status-description");
+    elements.refreshTask = byId("refresh-task");
     elements.cancelTask = byId("cancel-task");
+    elements.recentRunsCount = byId("recent-runs-count");
+    elements.refreshRecentRuns = byId("refresh-recent-runs");
+    elements.recentRunsLoading = byId("recent-runs-loading");
+    elements.recentRunsEmpty = byId("recent-runs-empty");
+    elements.recentRunsUnavailable = byId("recent-runs-unavailable");
+    elements.recentRunsUnavailableMessage = byId("recent-runs-unavailable-message");
+    elements.recentRunsList = byId("recent-runs-list");
     elements.planList = byId("plan-list");
     elements.planCount = byId("plan-count");
     elements.timelineList = byId("timeline-list");
@@ -1572,6 +2122,23 @@
     elements.workflowErrorState = byId("workflow-error-state");
     elements.workflowErrorMessage = byId("workflow-error-message");
     elements.workflowList = byId("workflow-list");
+    elements.developerWorkspaceStatus = byId("developer-workspace-status");
+    elements.developerToolCount = byId("developer-tool-count");
+    elements.developerToolList = byId("developer-tool-list");
+    elements.openWorkspaceReport = byId("open-workspace-report");
+    elements.developerActionStatus = byId("developer-action-status");
+    elements.overviewSyncLabel = byId("overview-sync-label");
+    elements.overviewActive = byId("overview-active");
+    elements.overviewActiveDetail = byId("overview-active-detail");
+    elements.overviewCompleted = byId("overview-completed");
+    elements.overviewFailed = byId("overview-failed");
+    elements.overviewFailedDetail = byId("overview-failed-detail");
+    elements.overviewRecovery = byId("overview-recovery");
+    elements.overviewTotal = byId("overview-total");
+    elements.overviewLastUpdated = byId("overview-last-updated");
+    elements.verifyProvider = byId("verify-provider");
+    elements.verifyProviderLabel = byId("verify-provider-label");
+    elements.providerActionStatus = byId("provider-action-status");
     elements.measureSystem = byId("measure-system");
     elements.measureSystemLabel = byId("measure-system-label");
     elements.systemCapabilitySummary = byId("system-capability-summary");
@@ -1632,13 +2199,17 @@
 
   function init() {
     cacheElements();
-    connectNavigation();
     elements.scenarioMode.addEventListener("change", () => {
       updateModeHelp();
       renderWorkflowGoalPreview();
     });
     elements.scenarioContext.addEventListener("input", renderWorkflowGoalPreview);
     elements.goalForm.addEventListener("submit", submitTask);
+    elements.refreshTask.addEventListener("click", () => {
+      if (state.task?.task_id) {
+        void restoreTask(state.task.task_id, { source: "manual reconnect" });
+      }
+    });
     elements.cancelTask.addEventListener("click", cancelTask);
     elements.runEvaluation.addEventListener("click", runEvaluation);
     elements.voiceInput.addEventListener("click", toggleVoiceInput);
@@ -1649,6 +2220,9 @@
     elements.memoryForm.addEventListener("submit", saveMemory);
     elements.refreshMemory.addEventListener("click", loadMemory);
     elements.resetMemory.addEventListener("click", resetMemory);
+    elements.verifyProvider.addEventListener("click", verifyProvider);
+    elements.openWorkspaceReport.addEventListener("click", openWorkspaceReport);
+    elements.refreshRecentRuns.addEventListener("click", loadRecentRuns);
     updateModeHelp();
     renderWorkflowGoalPreview();
     renderEmptyState();
@@ -1664,10 +2238,14 @@
     addText(elements.evaluationCatalogList, "li", "evaluation-empty", "Loading the actual catalog from the API.");
     setWorkflowState("loading");
     setMemoryState("loading");
+    setRecentRunsState("loading");
+    elements.recentRunsCount.textContent = "Checking";
     elements.systemSnapshotResults.hidden = true;
     elements.systemSnapshotError.hidden = true;
     configureVoice();
+    connectNavigation();
     void loadSystemData();
+    void loadRecentRuns();
   }
 
   document.addEventListener("DOMContentLoaded", init);

@@ -31,28 +31,32 @@
             <span class="nav-index">02</span>
             <span>Automation Studio</span>
           </button>
-          <button class="nav-item" type="button" data-section-target="live-console">
+          <button class="nav-item" type="button" data-section-target="developer-intelligence">
             <span class="nav-index">03</span>
+            <span>Developer Intelligence</span>
+          </button>
+          <button class="nav-item" type="button" data-section-target="live-console">
+            <span class="nav-index">04</span>
             <span>Live Console</span>
           </button>
           <button class="nav-item" type="button" data-section-target="system-intelligence">
-            <span class="nav-index">04</span>
+            <span class="nav-index">05</span>
             <span>System Intelligence</span>
           </button>
           <button class="nav-item" type="button" data-section-target="memory-center">
-            <span class="nav-index">05</span>
+            <span class="nav-index">06</span>
             <span>Memory Center</span>
           </button>
           <button class="nav-item" type="button" data-section-target="evaluation-lab">
-            <span class="nav-index">06</span>
+            <span class="nav-index">07</span>
             <span>Evaluation Lab</span>
           </button>
           <button class="nav-item" type="button" data-section-target="security-capabilities">
-            <span class="nav-index">07</span>
+            <span class="nav-index">08</span>
             <span>Security &amp; Capabilities</span>
           </button>
           <button class="nav-item" type="button" data-section-target="runbook">
-            <span class="nav-index">08</span>
+            <span class="nav-index">09</span>
             <span>Runbook / How it works</span>
           </button>
         </nav>
@@ -71,7 +75,7 @@
           </div>
           <div class="system-strip" aria-label="API system status">
             <div class="system-status">
-              <span class="status-dot" id="health-dot" aria-hidden="true"></span>
+              <span class="status-dot is-checking" id="health-dot" aria-hidden="true"></span>
               <div>
                 <span class="system-label">API readiness</span>
                 <strong id="health-status" aria-live="polite">Checking API</strong>
@@ -113,6 +117,7 @@
                   <label for="scenario-mode">Scenario mode</label>
                   <select id="scenario-mode" name="scenario-mode">
                     <option value="success">Verified action</option>
+                    <option value="ai_goal" disabled>Verified Gemini goal (requires provider check)</option>
                     <option value="failure_recovery">Self-healing recovery</option>
                     <option value="approval">Approval gate</option>
                     <option value="timeout">Timeout boundary</option>
@@ -161,7 +166,24 @@
                   <span class="deferred-label">Deferred</span>
                    <span>Unverified providers, desktop automation, and unrestricted actions.</span>
                 </div>
-              </aside>
+             </aside>
+            </div>
+
+            <div class="command-overview" aria-labelledby="command-overview-title">
+              <div class="command-overview-heading">
+                <div>
+                  <p class="eyebrow">Measured command state</p>
+                  <h3 id="command-overview-title">Operational overview</h3>
+                </div>
+                <span class="sync-label" id="overview-sync-label" aria-live="polite">Loading task aggregates</span>
+              </div>
+              <div class="overview-metric-grid" id="overview-metric-grid">
+                <article class="overview-metric panel"><span>Active tasks</span><strong id="overview-active">—</strong><small id="overview-active-detail">Waiting for API data</small></article>
+                <article class="overview-metric panel"><span>Verified completions</span><strong id="overview-completed">—</strong><small>Completed task records</small></article>
+                <article class="overview-metric panel"><span>Failures / partial</span><strong id="overview-failed">—</strong><small id="overview-failed-detail">Failed + partially completed</small></article>
+                <article class="overview-metric panel"><span>Recovery events</span><strong id="overview-recovery">—</strong><small>Persisted recovery observations</small></article>
+                <article class="overview-metric panel"><span>Total runs</span><strong id="overview-total">—</strong><small id="overview-last-updated">Last update unavailable</small></article>
+              </div>
             </div>
            </section>
 
@@ -228,15 +250,75 @@
             </div>
           </section>
 
+          <section class="section-block developer-section" id="developer-intelligence" data-section="developer-intelligence" aria-labelledby="developer-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow accent-eyebrow">03 / inspect an approved workspace</p>
+                <h2 id="developer-title">Developer Intelligence</h2>
+                <p class="section-intro">ARRAX exposes only the workspace tools that the backend explicitly registered. This surface never runs arbitrary shell commands or silently edits files.</p>
+              </div>
+              <span class="sync-label" id="developer-workspace-status" aria-live="polite">Checking workspace capability</span>
+            </div>
+            <div class="developer-grid">
+              <section class="developer-capability panel" aria-labelledby="developer-capability-title">
+                <div class="panel-header">
+                  <div>
+                    <p class="eyebrow">Backend capability</p>
+                    <h3 id="developer-capability-title">Approved workspace tools</h3>
+                  </div>
+                  <span class="panel-count" id="developer-tool-count">Checking</span>
+                </div>
+                <ul class="developer-tool-list" id="developer-tool-list"></ul>
+                <p class="field-help">When enabled, reads and report writes stay inside the configured approved root. The root itself is never shown in the browser.</p>
+              </section>
+              <section class="developer-action panel" aria-labelledby="developer-action-title">
+                <div class="panel-kicker">
+                  <span class="kicker-line violet-line" aria-hidden="true"></span>
+                  <span>Safe developer flow</span>
+                </div>
+                <h3 id="developer-action-title">Workspace readiness report</h3>
+                <p>Inspect a bounded workspace snapshot, request approval for the report write, then verify the actual report marker. This is the implemented developer workflow; broader diff analysis and test execution remain explicitly unavailable.</p>
+                <button class="secondary-button" id="open-workspace-report" type="button" disabled>Open approved report composer</button>
+                <p class="form-status" id="developer-action-status" role="status">Workspace capability is being checked.</p>
+              </section>
+            </div>
+          </section>
+
           <section class="section-block console-section" id="live-console" data-section="live-console" aria-labelledby="console-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">03 / observe the real run</p>
+                <p class="eyebrow accent-eyebrow">04 / observe the real run</p>
                 <h2 id="console-title">Live Console</h2>
                 <p class="section-intro">The task, plan, and timeline below are populated from the API. No simulated telemetry is shown.</p>
               </div>
               <div class="sync-label" id="sync-label" aria-live="polite">Awaiting a task</div>
             </div>
+
+            <section class="recent-runs-panel panel" aria-labelledby="recent-runs-title">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Persisted task index</p>
+                  <h3 id="recent-runs-title">Recent runs</h3>
+                </div>
+                <div class="library-actions">
+                  <span class="panel-count" id="recent-runs-count">Checking</span>
+                  <button class="secondary-button compact-button" id="refresh-recent-runs" type="button">Refresh</button>
+                </div>
+              </div>
+              <div class="resource-state" id="recent-runs-loading" hidden>
+                <span class="loading-glyph" aria-hidden="true"></span>
+                <p>Loading recent tasks from the API…</p>
+              </div>
+              <div class="resource-state" id="recent-runs-empty" hidden>
+                <div class="empty-glyph" aria-hidden="true">[]</div>
+                <p>No persisted runs were returned by the API.</p>
+              </div>
+              <div class="resource-state resource-error-state" id="recent-runs-unavailable" hidden>
+                <div class="empty-glyph" aria-hidden="true">!</div>
+                <p id="recent-runs-unavailable-message">The task index is not available in this API version.</p>
+              </div>
+              <ol class="recent-runs-list" id="recent-runs-list" aria-live="polite"></ol>
+            </section>
 
             <div class="empty-state panel" id="empty-state">
               <div class="empty-glyph" aria-hidden="true">//</div>
@@ -257,8 +339,9 @@
                 </div>
                 <div class="task-overview-side">
                   <span class="status-badge status-neutral" id="task-status">Queued</span>
-                  <p class="status-description" id="task-status-description">Waiting for the local worker.</p>
-                  <button class="secondary-button danger-button" id="cancel-task" type="button" hidden>Cancel task</button>
+                   <p class="status-description" id="task-status-description">Waiting for the local worker.</p>
+                   <button class="secondary-button" id="refresh-task" type="button" hidden>Reconnect task</button>
+                   <button class="secondary-button danger-button" id="cancel-task" type="button" hidden>Cancel task</button>
                 </div>
               </div>
 
@@ -291,7 +374,7 @@
           <section class="section-block system-section" id="system-intelligence" data-section="system-intelligence" aria-labelledby="system-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">04 / measure what the API can see</p>
+                <p class="eyebrow accent-eyebrow">05 / measure what the API can see</p>
                 <h2 id="system-title">System Intelligence</h2>
                 <p class="section-intro">Inspect one capability-aware local snapshot on demand. Measurements are point-in-time observations; unavailable metrics stay explicitly unavailable.</p>
               </div>
@@ -347,7 +430,7 @@
           <section class="section-block memory-section" id="memory-center" data-section="memory-center" aria-labelledby="memory-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">05 / keep bounded user context</p>
+                <p class="eyebrow accent-eyebrow">06 / keep bounded user context</p>
                 <h2 id="memory-title">Memory Center</h2>
                 <p class="section-intro">Manage the actual validated memory records persisted by the API. Values are bounded text here, and credential-like data is rejected before storage.</p>
               </div>
@@ -413,7 +496,7 @@
           <section class="section-block evaluation-section" id="evaluation-lab" data-section="evaluation-lab" aria-labelledby="evaluation-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">06 / reproduce the safe regression suite</p>
+                <p class="eyebrow accent-eyebrow">07 / reproduce the safe regression suite</p>
                 <h2 id="evaluation-title">Evaluation Lab</h2>
                 <p class="section-intro">Run the actual deterministic fixture scenarios in fresh in-memory cores. Durations are local regression measurements, not production performance claims.</p>
               </div>
@@ -487,7 +570,7 @@
           <section class="section-block capabilities-section" id="security-capabilities" data-section="security-capabilities" aria-labelledby="capabilities-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">07 / inspect the boundary</p>
+                <p class="eyebrow accent-eyebrow">08 / inspect the boundary</p>
                 <h2 id="capabilities-title">Security &amp; Capabilities</h2>
                 <p class="section-intro">This inventory is loaded from <code>/api/capabilities</code>; provider labels reflect backend verification, never a browser assumption.</p>
               </div>
@@ -508,15 +591,21 @@
                   <span class="kicker-line violet-line" aria-hidden="true"></span>
                   <span>Runtime contract</span>
                 </div>
-                <dl class="capability-details">
+                  <dl class="capability-details">
                   <div><dt>Execution mode</dt><dd id="capability-execution">Loading</dd></div>
                   <div><dt>Provider mode</dt><dd id="capability-provider">Loading</dd></div>
                   <div><dt>Configured model</dt><dd id="capability-provider-model">Loading</dd></div>
                   <div><dt>Provider verification</dt><dd id="capability-provider-verification">Loading</dd></div>
                   <div><dt>Approval boundary</dt><dd>Core-enforced</dd></div>
                   <div><dt>Verification</dt><dd>Required for completion</dd></div>
-                </dl>
-                 <p class="deferred-copy">Gemini is optional and account-dependent. The dashboard shows it as verified only when the backend has checked the exact model and completed its canary.</p>
+                   </dl>
+                  <div class="provider-action-row">
+                    <button class="secondary-button compact-button" id="verify-provider" type="button">
+                      <span id="verify-provider-label">Verify live provider</span>
+                    </button>
+                    <span class="form-status" id="provider-action-status" role="status">Verification is explicit and may contact Gemini.</span>
+                  </div>
+                  <p class="deferred-copy">Gemini is optional and account-dependent. The dashboard shows it as verified only when the backend has checked the exact model and completed its canary.</p>
               </div>
             </div>
           </section>
@@ -524,7 +613,7 @@
           <section class="section-block runbook-section" id="runbook" data-section="runbook" aria-labelledby="runbook-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">08 / understand the loop</p>
+                <p class="eyebrow accent-eyebrow">09 / understand the loop</p>
                 <h2 id="runbook-title">Runbook / How it works</h2>
                 <p class="section-intro">A concise view of the lifecycle that this local dashboard actually exercises.</p>
               </div>

@@ -36,6 +36,37 @@ class Event:
 
 
 @dataclass(frozen=True)
+class TaskSummary:
+    """Bounded task state used by task-history listings."""
+
+    task_id: str
+    goal: dict[str, Any]
+    status: TaskStatus
+    result: dict[str, Any] | None
+    error: str | None
+    cancellation_requested: bool
+    created_at: str
+    updated_at: str
+    step_count: int
+    event_count: int
+
+
+@dataclass(frozen=True)
+class TaskOverview:
+    """Aggregate task and recovery counts for the command center."""
+
+    total: int
+    active: int
+    completed: int
+    failed: int
+    partially_completed: int
+    awaiting_approval: int
+    recovery_event_count: int
+    last_updated_at: str | None
+    counts: dict[str, int]
+
+
+@dataclass(frozen=True)
 class Workflow:
     """A reusable, validated structured goal."""
 
@@ -214,6 +245,77 @@ class TaskRepository:
             cancellation_requested=bool(row["cancellation_requested"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+        )
+
+    def list_recent(self, *, limit: int, offset: int = 0) -> tuple[list[TaskSummary], int]:
+        """Return persisted task summaries in deterministic recent-first order."""
+
+        with self.store._lock:
+            total_row = self.store.connection.execute("SELECT COUNT(*) AS total FROM tasks").fetchone()
+            rows = self.store.connection.execute(
+                """
+                SELECT
+                    tasks.*,
+                    (SELECT COUNT(*) FROM steps WHERE steps.task_id = tasks.task_id) AS step_count,
+                    (SELECT COUNT(*) FROM events WHERE events.task_id = tasks.task_id) AS event_count
+                FROM tasks
+                ORDER BY tasks.updated_at DESC, tasks.task_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+
+        summaries = [
+            TaskSummary(
+                task_id=row["task_id"],
+                goal=_loads(row["goal_json"]),
+                status=TaskStatus(row["status"]),
+                result=_loads(row["result_json"]),
+                error=row["error"],
+                cancellation_requested=bool(row["cancellation_requested"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                step_count=int(row["step_count"]),
+                event_count=int(row["event_count"]),
+            )
+            for row in rows
+        ]
+        return summaries, int(total_row["total"])
+
+    def overview(self) -> TaskOverview:
+        """Return bounded aggregate counts without loading task histories."""
+
+        with self.store._lock:
+            status_rows = self.store.connection.execute(
+                "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status"
+            ).fetchall()
+            recovery_row = self.store.connection.execute(
+                "SELECT COUNT(*) AS count FROM events WHERE event_type = 'step.recovering'"
+            ).fetchone()
+            latest_row = self.store.connection.execute(
+                "SELECT MAX(updated_at) AS updated_at FROM tasks"
+            ).fetchone()
+
+        counts = {status.value: 0 for status in TaskStatus}
+        counts.update({str(row["status"]): int(row["count"]) for row in status_rows})
+        active_statuses = {
+            TaskStatus.QUEUED.value,
+            TaskStatus.PLANNING.value,
+            TaskStatus.AWAITING_APPROVAL.value,
+            TaskStatus.RUNNING.value,
+            TaskStatus.RECOVERING.value,
+            TaskStatus.VERIFYING.value,
+        }
+        return TaskOverview(
+            total=sum(counts.values()),
+            active=sum(counts.get(status, 0) for status in active_statuses),
+            completed=counts[TaskStatus.COMPLETED.value],
+            failed=counts[TaskStatus.FAILED.value],
+            partially_completed=counts[TaskStatus.PARTIALLY_COMPLETED.value],
+            awaiting_approval=counts[TaskStatus.AWAITING_APPROVAL.value],
+            recovery_event_count=int(recovery_row["count"]),
+            last_updated_at=latest_row["updated_at"],
+            counts=counts,
         )
 
     def update(self, task: Task) -> Task:

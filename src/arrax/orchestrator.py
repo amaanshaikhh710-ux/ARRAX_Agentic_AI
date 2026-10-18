@@ -8,9 +8,9 @@ import uuid
 from typing import Any, Mapping
 
 from .domain import PlanStep, RiskLevel, Task, TaskStatus
-from .planner import DeterministicPlanner, PlanningError
+from .planner import DeterministicPlanner, PlanningError, validate_plan_dependencies
 from .provider import GeminiProvider, HybridPlanner, ProviderConfig, ProviderMode, ProviderStatus, _coerce_status
-from .storage import Event, SQLiteStore, utc_now
+from .storage import Event, SQLiteStore, TaskSummary, utc_now
 from .tools import ToolInputError, ToolRegistry, UnknownToolError, default_registry
 from .workspace import normalize_workspace_root
 
@@ -127,7 +127,12 @@ class AgentCore:
             } and self.workspace_root is None:
                 raise PlanningError("workspace_report requires an explicitly configured ARRAX_WORKSPACE_ROOT")
             plan = self.planner.plan(task.goal)
-            task = task.with_updates(plan=plan, status=TaskStatus.QUEUED, error=None)
+            planned_task = task.with_updates(plan=plan, status=TaskStatus.QUEUED, error=None)
+            # Validate the complete graph before writing plan steps.  This is
+            # also required for injected/provider planners whose output does
+            # not pass through DeterministicPlanner's structured-plan branch.
+            self._validate_plan_references(planned_task)
+            task = planned_task
             self.store.steps.replace_for_task(task.task_id, plan)
             plan_event = {"step_count": len(plan)}
             provider_status = self.provider_status
@@ -147,7 +152,6 @@ class AgentCore:
                 missing_workspace_tools = required_workspace_tools - set(self.registry.names())
                 if missing_workspace_tools:
                     raise PlanningError("workspace_report requires all workspace tools to be available")
-            self._validate_plan_references(task)
             return task
         except Exception as exc:
             error = self._safe_error(exc)
@@ -270,6 +274,11 @@ class AgentCore:
     def get_events(self, task_id: str) -> list[Event]:
         self._get_task(task_id)
         return self.store.events.list(task_id)
+
+    def list_task_summaries(self, *, limit: int, offset: int = 0) -> tuple[list[TaskSummary], int]:
+        """Return persisted task summaries without loading plans or events."""
+
+        return self.store.tasks.list_recent(limit=limit, offset=offset)
 
     def fail_task(self, task_id: str, reason: str = "task execution failed unexpectedly") -> Task:
         """Persist a safe terminal failure for an unexpected worker error.
@@ -512,6 +521,8 @@ class AgentCore:
                 raise PlanningError(f"step {step.step_id!r} has missing dependencies: {sorted(missing)}")
             if step.step_id in step.dependencies:
                 raise PlanningError(f"step {step.step_id!r} depends on itself")
+        validate_plan_dependencies(task.plan)
+        for step in task.plan:
             try:
                 required_risk = self.registry.risk_for(step.tool_name)
             except UnknownToolError:

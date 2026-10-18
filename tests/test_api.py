@@ -115,6 +115,8 @@ def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
         "/api/provider/status",
         "/api/tasks",
         "/api/tasks/",
+        "/api/tasks/history",
+        "/api/tasks/overview",
         "/events",
         "/approve",
         "/cancel",
@@ -139,9 +141,16 @@ def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
     assert "speechSynthesis" in script
     assert 'method: "DELETE"' in script
     assert "window.confirm" in script
+    assert "/api/provider/status?verify=1" in script
+    assert "value=\"ai_goal\"" in dashboard
+    assert "provider-directed goal" in script
+    assert "overview-active" in dashboard
+    assert "verify-provider" in dashboard
+    assert "open-workspace-report" in script
     for section in (
         "command-center",
         "automation-studio",
+        "developer-intelligence",
         "live-console",
         "system-intelligence",
         "memory-center",
@@ -261,6 +270,123 @@ def test_create_start_poll_and_read_event_history(client):
         events["events"][-1]
     )
     assert events["events"][-1]["event_type"] == "task.completed"
+
+
+def test_task_history_lists_persisted_summaries_after_reload(tmp_path):
+    db_path = tmp_path / "history.sqlite"
+    first_core = AgentCore(db_path=str(db_path))
+    first_app = create_app(core=first_core, config={"TESTING": True})
+    try:
+        first_client = first_app.test_client()
+        created_ids = [
+            first_client.post(
+                "/api/tasks",
+                json={"goal": {"type": "success", "message": message}, "start": False},
+            ).get_json()["task_id"]
+            for message in ("first", "second", "third")
+        ]
+        before_reload = first_client.get("/api/tasks/history?limit=2")
+        assert before_reload.status_code == 200
+        before_body = before_reload.get_json()
+        assert before_body["total"] == 3
+        assert before_body["limit"] == 2
+        assert before_body["offset"] == 0
+        assert before_body["has_more"] is True
+        assert len(before_body["tasks"]) == 2
+        summary = before_body["tasks"][0]
+        assert {
+            "task_id",
+            "goal",
+            "status",
+            "result",
+            "error",
+            "cancellation_requested",
+            "created_at",
+            "updated_at",
+            "step_count",
+            "event_count",
+        } <= set(summary)
+        assert summary["task_id"] in created_ids
+        assert summary["status"] == "queued"
+        assert summary["step_count"] == 1
+        assert summary["event_count"] == 3
+    finally:
+        first_app.extensions["arrax"]["shutdown"]()
+        first_core.close()
+
+    restored_core = AgentCore(db_path=str(db_path))
+    restored_app = create_app(core=restored_core, config={"TESTING": True})
+    try:
+        restored_client = restored_app.test_client()
+        history = restored_client.get("/api/tasks/history?limit=2&offset=2")
+        assert history.status_code == 200
+        body = history.get_json()
+        assert body["total"] == 3
+        assert body["has_more"] is False
+        assert len(body["tasks"]) == 1
+
+        restored_id = body["tasks"][0]["task_id"]
+        assert restored_id in created_ids
+        assert restored_client.get(f"/api/tasks/{restored_id}").status_code == 200
+        events = restored_client.get(f"/api/tasks/{restored_id}/events")
+        assert events.status_code == 200
+        assert events.get_json()["events"][-1]["event_type"] == "plan.created"
+    finally:
+        restored_app.extensions["arrax"]["shutdown"]()
+        restored_core.close()
+
+
+def test_task_overview_reports_measured_counts_and_recovery_events(client):
+    completed = client.post(
+        "/api/tasks",
+        json={"goal": {"type": "success", "message": "overview-complete"}},
+    )
+    assert completed.status_code == 202
+    assert wait_for_terminal(client, completed.get_json()["task_id"])["status"] == "completed"
+
+    recovery = client.post(
+        "/api/tasks",
+        json={"goal": {"type": "failure_recovery", "key": "overview-recovery"}},
+    )
+    assert recovery.status_code == 202
+    assert wait_for_terminal(client, recovery.get_json()["task_id"])["status"] == "completed"
+
+    overview = client.get("/api/tasks/overview")
+
+    assert overview.status_code == 200
+    body = overview.get_json()
+    assert body["total"] == 2
+    assert body["active"] == 0
+    assert body["completed"] == 2
+    assert body["failed"] == 0
+    assert body["partially_completed"] == 0
+    assert body["awaiting_approval"] == 0
+    assert body["recovery_event_count"] >= 1
+    assert body["counts"]["completed"] == 2
+    assert body["last_updated_at"]
+
+
+def test_task_history_includes_the_same_measured_overview(client):
+    created = client.post(
+        "/api/tasks",
+        json={"goal": {"type": "success", "message": "history-overview"}, "start": False},
+    )
+    assert created.status_code == 201
+
+    history = client.get("/api/tasks/history")
+
+    assert history.status_code == 200
+    body = history.get_json()
+    assert body["overview"]["total"] == 1
+    assert body["overview"]["counts"]["queued"] == 1
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=51", "offset=-1", "limit=not-a-number"])
+def test_task_history_rejects_unbounded_or_invalid_pagination(client, query):
+    response = client.get(f"/api/tasks/history?{query}")
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "invalid_pagination"
 
 
 def test_create_without_start_then_explicit_run(client):

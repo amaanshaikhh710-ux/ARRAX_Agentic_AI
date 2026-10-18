@@ -4,7 +4,7 @@ from .domain import DomainValidationError, PlanStep, RiskLevel, Task, TaskStatus
 from .api import create_app
 from .evaluation import EvaluationError, EvaluationScenario, UnknownScenarioError, run_evaluation, scenario_catalog
 from .orchestrator import AgentCore, TaskNotFoundError, create_default_core
-from .planner import DeterministicPlanner, PlanningError
+from .planner import DeterministicPlanner, PlanningError, validate_plan_dependencies
 from .provider import (
     DEFAULT_GEMINI_MODEL,
     GEMINI_API_ORIGIN,
@@ -33,7 +33,7 @@ from .services import (
     WorkflowValidationError,
     WORKFLOW_VERSION,
 )
-from .storage import Event, MemoryRecord, MemoryRepository, SQLiteStore, Workflow, WorkflowRepository
+from .storage import Event, MemoryRecord, MemoryRepository, SQLiteStore, TaskOverview, TaskSummary, Workflow, WorkflowRepository
 from .system import SystemService, SystemSnapshotService
 from .tools import (
     ApprovalRequiredTool,
@@ -91,6 +91,8 @@ __all__ = [
     "SystemService",
     "SystemSnapshotService",
     "Task",
+    "TaskOverview",
+    "TaskSummary",
     "TaskNotFoundError",
     "TaskStatus",
     "Tool",
@@ -115,4 +117,5 @@ __all__ = [
     "run_evaluation",
     "scenario_catalog",
     "workspace_tools",
+    "validate_plan_dependencies",
 ]

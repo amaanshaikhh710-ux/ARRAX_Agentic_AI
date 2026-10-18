@@ -34,7 +34,7 @@ from .services import (
     WorkflowService,
     WorkflowValidationError,
 )
-from .storage import Event, MemoryRecord, Workflow
+from .storage import Event, MemoryRecord, TaskOverview, TaskSummary, Workflow
 from .system import SystemSnapshotService
 from .workspace import normalize_workspace_root
 
@@ -42,6 +42,9 @@ from .workspace import normalize_workspace_root
 DEFAULT_MAX_CONTENT_LENGTH = 64 * 1024
 DEFAULT_MAX_WORKERS = 4
 DEFAULT_MAX_QUEUE = 32
+DEFAULT_TASK_HISTORY_LIMIT = 20
+MAX_TASK_HISTORY_LIMIT = 50
+MAX_TASK_HISTORY_OFFSET = 10_000
 MAX_GOAL_DEPTH = 32
 FRONTEND_DIRECTORY = Path(__file__).resolve().parents[2] / "frontend"
 
@@ -216,6 +219,39 @@ def serialize_task(task: Task) -> dict[str, Any]:
     }
 
 
+def serialize_task_summary(summary: TaskSummary) -> dict[str, Any]:
+    """Return bounded-list state while leaving full detail to task routes."""
+
+    return {
+        "task_id": summary.task_id,
+        "goal": dict(summary.goal),
+        "status": summary.status.value,
+        "result": dict(summary.result) if summary.result is not None else None,
+        "error": summary.error,
+        "cancellation_requested": summary.cancellation_requested,
+        "created_at": summary.created_at,
+        "updated_at": summary.updated_at,
+        "step_count": summary.step_count,
+        "event_count": summary.event_count,
+    }
+
+
+def serialize_task_overview(overview: TaskOverview) -> dict[str, Any]:
+    """Return measured aggregate task state for the command center."""
+
+    return {
+        "total": overview.total,
+        "active": overview.active,
+        "completed": overview.completed,
+        "failed": overview.failed,
+        "partially_completed": overview.partially_completed,
+        "awaiting_approval": overview.awaiting_approval,
+        "recovery_event_count": overview.recovery_event_count,
+        "last_updated_at": overview.last_updated_at,
+        "counts": dict(overview.counts),
+    }
+
+
 def serialize_event(event: Event) -> dict[str, Any]:
     """Return a stable persisted event document."""
 
@@ -337,6 +373,23 @@ def _require_task_create_payload(payload: Mapping[str, Any]) -> tuple[dict[str, 
 
 def _task_response(task: Task, status_code: int = 200):
     return jsonify(serialize_task(task)), status_code
+
+
+def _history_query_integer(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw = request.args.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw, 10)
+    except (TypeError, ValueError) as exc:
+        raise APIError("invalid_pagination", f"{name} must be an integer", 400) from exc
+    if not minimum <= value <= maximum:
+        raise APIError(
+            "invalid_pagination",
+            f"{name} must be between {minimum} and {maximum}",
+            400,
+        )
+    return value
 
 
 def create_app(
@@ -732,6 +785,43 @@ def create_app(
             return _task_response(task, 202)
         return _task_response(task, 201)
 
+    @app.get("/api/tasks/history")
+    def task_history():
+        """List persisted task summaries without loading full task detail."""
+
+        unknown = set(request.args) - {"limit", "offset"}
+        if unknown:
+            raise APIError("invalid_request", "request contains unsupported fields", 400)
+        limit = _history_query_integer(
+            "limit",
+            default=DEFAULT_TASK_HISTORY_LIMIT,
+            minimum=1,
+            maximum=MAX_TASK_HISTORY_LIMIT,
+        )
+        offset = _history_query_integer(
+            "offset",
+            default=0,
+            minimum=0,
+            maximum=MAX_TASK_HISTORY_OFFSET,
+        )
+        summaries, total = core.list_task_summaries(limit=limit, offset=offset)
+        return jsonify(
+            {
+                "tasks": [serialize_task_summary(summary) for summary in summaries],
+                "limit": limit,
+                "offset": offset,
+                "total": total,
+                "has_more": offset + len(summaries) < total,
+                "overview": serialize_task_overview(core.store.tasks.overview()),
+            }
+        )
+
+    @app.get("/api/tasks/overview")
+    def task_overview():
+        """Return measured aggregate task and recovery state."""
+
+        return jsonify(serialize_task_overview(core.store.tasks.overview()))
+
     @app.post("/api/tasks/<task_id>/run")
     def run_task(task_id: str):
         task = _safe_task(core, task_id)
@@ -811,5 +901,7 @@ __all__ = [
     "serialize_memory",
     "serialize_step",
     "serialize_task",
+    "serialize_task_overview",
+    "serialize_task_summary",
     "serialize_workflow",
 ]

@@ -16,6 +16,7 @@ from arrax import (
     ProviderMode,
     ProviderStatus,
     StructuredProviderPlanner,
+    TaskStatus,
     create_app,
     default_registry,
 )
@@ -214,6 +215,21 @@ def test_structured_provider_planner_accepts_valid_json_plan():
     plan = planner.plan({"type": "success", "message": "goal"})
     assert plan[0].tool_name == "fixture.success"
     assert plan[0].risk.value == "read_only"
+
+
+def test_verified_provider_can_plan_a_natural_language_goal():
+    fake = FakePlannerProvider(valid_plan_text(), mode=ProviderMode.GEMINI)
+    core = AgentCore(provider=fake)
+    try:
+        task = core.create_task({"type": "ai_goal", "message": "verify a local outcome"})
+        finished = core.run_task(task.id)
+
+        assert finished.status is TaskStatus.COMPLETED
+        assert finished.plan[0].tool_name == "fixture.success"
+        assert fake.generate_calls == 1
+        assert core.provider_status["last_mode"] == "gemini"
+    finally:
+        core.close()
 
 
 @pytest.mark.parametrize(

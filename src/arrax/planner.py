@@ -12,6 +12,33 @@ class PlanningError(DomainValidationError):
     """Raised when a goal cannot be turned into a valid plan."""
 
 
+def validate_plan_dependencies(plan: tuple[PlanStep, ...]) -> None:
+    """Reject missing or cyclic dependencies before a plan can be persisted."""
+
+    graph = {step.step_id: step.dependencies for step in plan}
+    for step in plan:
+        missing = sorted({dependency for dependency in step.dependencies if dependency not in graph})
+        if missing:
+            raise PlanningError(f"step {step.step_id!r} has missing dependencies: {missing}")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(step_id: str) -> None:
+        if step_id in visiting:
+            raise PlanningError("plan dependencies contain a cycle")
+        if step_id in visited:
+            return
+        visiting.add(step_id)
+        for dependency in graph[step_id]:
+            visit(dependency)
+        visiting.remove(step_id)
+        visited.add(step_id)
+
+    for step in plan:
+        visit(step.step_id)
+
+
 def _required_string(data: Mapping[str, Any], key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -88,6 +115,7 @@ class DeterministicPlanner:
             )
             if len(steps) != len(raw_steps):
                 raise PlanningError("every structured plan step must be an object")
+            validate_plan_dependencies(steps)
             return steps
         raise PlanningError(f"unrecognized goal type: {goal_type}")
 

@@ -312,6 +312,16 @@ h3 {
   box-shadow: 0 0 13px rgba(255, 134, 145, 0.65);
 }
 
+.status-dot.is-ready {
+  background: var(--green);
+  box-shadow: 0 0 13px rgba(117, 224, 172, 0.65);
+}
+
+.status-dot.is-checking {
+  background: var(--amber);
+  box-shadow: 0 0 13px rgba(243, 200, 121, 0.55);
+}
+
 .api-notice {
   display: flex;
   align-items: center;
@@ -778,6 +788,81 @@ textarea::placeholder {
   gap: 18px;
 }
 
+.recent-runs-panel {
+  padding: 20px;
+  margin-bottom: 18px;
+  border-color: rgba(98, 230, 237, 0.18);
+  background: linear-gradient(145deg, rgba(15, 29, 39, 0.86), rgba(11, 17, 27, 0.94));
+}
+
+.recent-runs-panel .panel-header {
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.recent-runs-panel .library-actions {
+  align-items: center;
+}
+
+.recent-runs-list {
+  display: grid;
+  gap: 8px;
+  max-height: 340px;
+  padding: 0 4px 0 0;
+  margin: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.recent-run-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 13px;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(7, 12, 20, 0.5);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.recent-run-item:hover {
+  border-color: rgba(98, 230, 237, 0.48);
+  background: rgba(98, 230, 237, 0.07);
+  transform: translateY(-1px);
+}
+
+.recent-run-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.recent-run-summary {
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-run-id,
+.recent-run-time {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.recent-run-item .status-badge {
+  flex: 0 0 auto;
+}
+
 .panel-header {
   display: flex;
   align-items: flex-start;
@@ -1064,6 +1149,21 @@ code {
 
 .capability-details dd {
   color: var(--text);
+}
+
+.provider-action-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.provider-action-row .form-status {
+  flex: 1 1 220px;
+  margin: 0;
 }
 
 .deferred-copy {
@@ -1354,10 +1454,120 @@ code {
 }
 
 .automation-grid,
-.memory-grid {
+.memory-grid,
+.developer-grid {
   display: grid;
   grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
   gap: 18px;
+}
+
+.developer-capability,
+.developer-action {
+  padding: 24px;
+}
+
+.developer-tool-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.developer-tool-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 11px 12px;
+  color: var(--muted-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 12, 20, 0.5);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.developer-tool-list li:not(.tool-empty)::before {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  content: "";
+  border-radius: 50%;
+  background: var(--violet);
+}
+
+.developer-action h3 {
+  margin-bottom: 11px;
+}
+
+.developer-action p:not(.eyebrow):not(.form-status) {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.developer-action .form-status {
+  margin: 13px 0 0;
+}
+
+.command-overview {
+  margin-top: 22px;
+}
+
+.command-overview-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+
+.command-overview-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.overview-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-metric {
+  min-width: 0;
+  padding: 16px;
+  border-color: rgba(98, 230, 237, 0.16);
+  background: rgba(10, 17, 27, 0.72);
+}
+
+.overview-metric > span,
+.overview-metric > small {
+  display: block;
+}
+
+.overview-metric > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.overview-metric strong {
+  display: block;
+  margin: 8px 0 4px;
+  color: var(--cyan);
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.overview-metric small {
+  min-height: 30px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .workflow-form,
@@ -1695,6 +1905,10 @@ code {
   .evaluation-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .overview-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 800px) {
@@ -1769,6 +1983,10 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .developer-grid {
+    grid-template-columns: 1fr;
+  }
+
   .evaluation-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -1797,6 +2015,15 @@ code {
     text-align: left;
   }
 
+  .command-overview-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .overview-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .task-overview-side .secondary-button {
     width: 100%;
   }
@@ -1818,6 +2045,8 @@ code {
   .plan-panel,
   .timeline-panel,
   .capability-panel,
+  .developer-capability,
+  .developer-action,
   .runbook-step,
   .limitations-banner {
     padding: 18px;
@@ -1863,6 +2092,10 @@ code {
     display: grid;
     gap: 7px;
     padding-top: 55px;
+  }
+
+  .overview-metric-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1926,7 +2159,8 @@ code {
   .workflow-card-header,
   .memory-card-header,
   .memory-card-footer,
-  .workflow-actions {
+  .workflow-actions,
+  .recent-run-item {
     align-items: stretch;
     flex-direction: column;
   }

@@ -257,6 +257,11 @@ verified, deterministic fallback, missing-key, unavailable-model, rate-limit,
 timeout, network, and invalid-response states without returning the external
 response body.
 
+The unauthenticated local control plane is intentionally loopback-only when
+started with `python -m arrax`. `ARRAX_HOST=localhost`, `127.0.0.1`, and `::1`
+are accepted; non-loopback hosts are rejected until a real authentication and
+authorization boundary is implemented.
+
 ### Reusable workflows and safe memory
 
 Reusable workflows are stored in the same SQLite database as tasks and events.
@@ -291,6 +296,25 @@ submits it to the existing bounded worker manager. It returns the same task
 document as the task API, normally with HTTP `202`. Missing workflows, invalid
 goals, duplicate names, worker capacity failures, and malformed JSON use the
 stable `{"error": {"code": "...", "message": "..."}}` response shape.
+
+### Task history and command-center aggregates
+
+Task records and events remain available after an application reload. The
+bounded history route returns recent task summaries without loading full plans
+or event payloads:
+
+```text
+GET /api/tasks/history?limit=20&offset=0
+GET /api/tasks/overview
+```
+
+History limits are capped at 50 records per page and offsets are bounded. The
+overview is derived from SQLite task and event records and reports active task
+count, verified completions, failures, partial completions, approval waits,
+and persisted `step.recovering` events. It contains no fabricated telemetry.
+The dashboard uses this route for the Command Center's operational overview
+and the Live Console uses the history route to restore a previous run after a
+refresh.
 
 User-controlled memory is persisted as records with `id`, `key`, `value`,
 `category`, `created_at`, and `updated_at`. Values must be bounded JSON and
@@ -372,14 +396,23 @@ Linux/Docker and Windows.
 
 ### Dashboard sections and browser voice fallback
 
-The dashboard navigation scrolls to eight functional sections:
+The dashboard navigation scrolls to nine functional sections:
 
 - **Command Center** creates a normal deterministic task from the selected scenario.
+- **Command Center** also shows measured aggregate task state from persisted records: active tasks, verified completions, failures/partial completions, recovery events, and total runs.
+- After an explicit successful provider check, the composer enables **Verified Gemini goal**. Its bounded text becomes a provider planning request; Gemini can propose only a structured plan using registered tools, while ARRAX still owns approval, risk, timeout, cancellation, recovery, and verification decisions. Without a verified provider, the option remains disabled.
 - **Automation Studio** loads persisted workflows, saves the current structured scenario goal, and provides explicit run and confirmed delete controls. Saving never starts a task. A workflow run is shown in the existing Live Console task inspector and uses the normal task/event polling endpoints.
+- **Developer Intelligence** reports the actual registered workspace tools and provides a quick action into the approved workspace-readiness workflow. It clearly marks broader diff analysis, test execution, and unrestricted shell control as unavailable rather than presenting disconnected controls.
 - **Live Console** shows the selected task's persisted plan and event history.
 - **System Intelligence** loads measurement capabilities once and fetches a single measured snapshot only when the user presses the button. CPU, memory, disk, network, and bounded process summaries are rendered only from measured API fields. Unavailable metrics remain labelled unavailable, and API-provided threshold recommendations are shown with their measured timestamp.
 - **Memory Center** loads actual records, saves bounded text values, supports confirmed record deletion, and exposes the explicit confirmed reset operation. Credential-like values are rejected by the API; the browser clears a rejected submission and does not repeat it in a status message.
 - **Evaluation Lab**, **Security & Capabilities**, and **Runbook / How it works** retain their existing API-backed behavior.
+
+Security & Capabilities includes an explicit **Verify live provider** action.
+It calls `GET /api/provider/status?verify=1`; normal dashboard startup does not
+contact Gemini. A verified result is shown only after the backend has completed
+the configured model-list and canary checks, and missing credentials remain an
+explicit deterministic fallback state.
 
 The scenario composer includes a push-to-talk fallback. When the browser exposes
 `SpeechRecognition` or `webkitSpeechRecognition`, pressing the button starts one
