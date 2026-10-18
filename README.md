@@ -4,7 +4,7 @@
 
 ## Project status
 
-Milestone 1 is implemented as a small, offline deterministic agent core. The destination repository contains the task model, planner, allowlisted fixture tools, orchestrator, SQLite persistence, and pytest coverage described below.
+Milestones 1 and 2 are implemented as a small, offline deterministic agent core with a Flask API boundary. The destination repository contains the task model, planner, allowlisted fixture tools, orchestrator, SQLite persistence, bounded local workers, and pytest coverage described below.
 
 The application is intentionally being built as a fresh implementation. Completed work is marked explicitly as it is added and verified.
 
@@ -41,6 +41,8 @@ Currently implemented:
 - A synchronous plan/policy/act/observe/verify/recover orchestrator with cancellation boundaries.
 - SQLite task, step, and event repositories using stdlib `sqlite3` and transactions.
 - Offline pytest coverage for the complete safe core flow.
+- Flask application factory with validated task, plan, approval, cancellation, health, capabilities, and event-history endpoints.
+- Bounded asynchronous task workers with an explicit application shutdown hook for tests and embedding code.
 
 Not yet implemented:
 
@@ -52,7 +54,7 @@ Not yet implemented:
 The following foundation is configured for the core and future application layers:
 
 - **Core:** Python 3.12 or newer with the standard library; the core does not require Flask.
-- **Backend baseline:** Flask remains available for a future HTTP boundary.
+- **Backend:** Flask provides the local HTTP boundary around the core.
 - **Frontend:** Server-served HTML, CSS, and vanilla JavaScript.
 - **Tests:** `pytest` with mocks for external providers and unsafe tools.
 - **Persistence:** Local SQLite through the Python standard library.
@@ -89,7 +91,7 @@ AI output, if added, will be treated as untrusted input. It will not be allowed 
 
 ## Current folder structure
 
-The first milestone keeps the core in a small set of focused modules:
+The core and API boundary stay in a small set of focused modules:
 
 ```text
 ARRAX_Agentic_AI/
@@ -98,7 +100,8 @@ ARRAX_Agentic_AI/
 │   ├── planner.py         # deterministic structured-goal planner
 │   ├── tools.py           # allowlisted protocol and safe fixtures
 │   ├── storage.py         # SQLite repositories and schema
-│   └── orchestrator.py    # synchronous lifecycle and policy flow
+│   ├── orchestrator.py    # synchronous lifecycle and policy flow
+│   └── api.py             # Flask factory, serialization, and bounded workers
 ├── tests/                 # offline lifecycle and boundary tests
 ├── .env.example           # safe empty configuration template
 ├── .gitignore              # excludes secrets and runtime data
@@ -111,7 +114,7 @@ ARRAX_Agentic_AI/
 └── README.md
 ```
 
-HTTP, frontend, and platform-specific adapters remain future layers around this core.
+The Flask API in `api.py` is the HTTP boundary around this core. A frontend and platform-specific adapters remain future layers.
 
 ## Installation and setup
 
@@ -151,6 +154,18 @@ history = agent.get_events(task.id)
 agent.close()
 ```
 
+The application factory is available without starting a server. From a checkout with `src` on `PYTHONPATH`:
+
+```python
+from arrax import create_app
+
+app = create_app(db_path="arrax.sqlite")
+# A deployment or test harness starts the server explicitly.
+# When finished, call app.extensions["arrax"]["shutdown"]().
+```
+
+The factory does not bind a socket or create network clients. Its default mode is local and deterministic, and its default request body limit is 64 KiB. Tests can inject an existing `AgentCore` with `create_app(core=core)` and use the same shutdown hook to wait for bounded workers.
+
 Future application layers can extend this section with exact commands for:
 
 1. Selecting the supported Python version.
@@ -183,7 +198,7 @@ The project does not claim MySQL compatibility; SQLite is the deliberate local p
 
 ## Running the application
 
-Milestone 1 is a library core and has no HTTP or desktop runtime. Use the synchronous `AgentCore` API shown above or run the offline test suite.
+Milestone 2 adds a local Flask API but no desktop runtime or production server startup. Use the synchronous `AgentCore` API or the application factory shown above, then run the offline test suite.
 
 The default development mode is expected to be local-only and safe. Network exposure, authentication, and any platform-specific adapters will be addressed explicitly rather than enabled by default.
 
@@ -227,7 +242,7 @@ This project will not claim that a tool is successful until its completion can b
 
 The current known limitations are:
 
-- No HTTP application or frontend exists yet.
+- No frontend or production deployment is supported.
 - No AI provider is connected.
 - No desktop automation adapter is available.
 - No authentication or production deployment is supported.
@@ -240,7 +255,7 @@ These items will be removed from this list only after implementation and verific
 
 1. Establish the project configuration and reproducible test command. **Complete.**
 2. Implement a minimal task lifecycle with deterministic test tools. **Complete.**
-3. Add the API boundary and safe execution-status responses.
+3. Add the API boundary and safe execution-status responses. **Complete.**
 4. Add a small dashboard for task input, plan review, approval, and results.
 5. Add cancellation, timeouts, and result verification. **Core behavior complete; application surfaces remain.**
 6. Add optional AI planning behind strict schema and permission validation.

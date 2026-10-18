@@ -140,6 +140,34 @@ class AgentCore:
         self._get_task(task_id)
         return self.store.events.list(task_id)
 
+    def fail_task(self, task_id: str, reason: str = "task execution failed unexpectedly") -> Task:
+        """Persist a safe terminal failure for an unexpected worker error.
+
+        The asynchronous API boundary uses this guard when a worker catches an
+        exception outside the normal tool/task error paths. A task must never
+        remain apparently active forever merely because its worker crashed.
+        Internal exception details are intentionally not persisted or exposed.
+        """
+
+        task = self._get_task(task_id)
+        if task.status.terminal:
+            return task
+        steps = [
+            step.with_updates(
+                status=TaskStatus.FAILED,
+                result={"error_type": "internal_execution_error"},
+            )
+            if step.status not in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
+            else step
+            for step in task.plan
+        ]
+        return self._finish(
+            task.with_updates(plan=tuple(steps)),
+            TaskStatus.FAILED,
+            {"error_type": "internal_execution_error"},
+            reason,
+        )
+
     def close(self) -> None:
         self.store.close()
 
