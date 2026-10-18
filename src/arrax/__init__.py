@@ -2,6 +2,7 @@
 
 from .domain import DomainValidationError, PlanStep, RiskLevel, Task, TaskStatus
 from .api import create_app
+from .evaluation import EvaluationError, EvaluationScenario, UnknownScenarioError, run_evaluation, scenario_catalog
 from .orchestrator import AgentCore, TaskNotFoundError, create_default_core
 from .planner import DeterministicPlanner, PlanningError
 from .provider import (
@@ -46,6 +47,8 @@ __all__ = [
     "DeterministicPlanner",
     "DEFAULT_GEMINI_MODEL",
     "DomainValidationError",
+    "EvaluationError",
+    "EvaluationScenario",
     "Event",
     "FailOnceTool",
     "FixtureSuccessTool",
@@ -76,10 +79,13 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "UnknownToolError",
+    "UnknownScenarioError",
     "VerifyTool",
     "StructuredProviderPlanner",
     "UrllibTransport",
     "create_default_core",
     "default_registry",
+    "run_evaluation",
+    "scenario_catalog",
     "workspace_tools",
 ]

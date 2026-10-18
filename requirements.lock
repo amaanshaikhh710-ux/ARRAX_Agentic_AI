@@ -1,5 +1,5 @@
-# Pinned baseline for the planned Flask runtime and pytest test tooling.
-# Regenerate and validate this file with the project's resolver when dependency tooling is finalized.
+# Pinned runtime and test dependencies for Python 3.13.1-compatible offline runs.
+# Docker and local test commands install this file directly.
 Flask==3.1.1
 Jinja2==3.1.6
 MarkupSafe==3.0.2

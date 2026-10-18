@@ -21,6 +21,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from .domain import DomainValidationError, PlanStep, Task, TaskStatus
+from .evaluation import EvaluationError, UnknownScenarioError, run_evaluation, scenario_catalog
 from .orchestrator import AgentCore, TaskNotFoundError
 from .planner import PlanningError
 from .provider import ProviderConfig, ProviderConfigError
@@ -489,6 +490,43 @@ def create_app(
                 raise APIError("invalid_verify", "verify must be 0 or 1", 400)
         status = core.verify_provider() if verify else core.provider_status
         return jsonify({**status, "verification_requested": verify})
+
+    @app.get("/api/evaluation/scenarios")
+    def evaluation_scenarios():
+        """Return the fixed catalog for the synchronous offline evaluation lab."""
+
+        return jsonify(
+            {
+                "evaluation_type": "deterministic_regression",
+                "mode": "offline_deterministic",
+                "deterministic": True,
+                "offline": True,
+                "provider": "disabled",
+                "workspace": "disabled",
+                "scenarios": scenario_catalog(),
+            }
+        )
+
+    @app.post("/api/evaluation/run")
+    def evaluation_run():
+        """Run a small local evaluation synchronously; no worker or provider is used."""
+
+        payload = _json_object(allow_empty=True)
+        unknown = set(payload) - {"scenario"}
+        if unknown:
+            raise APIError("invalid_request", "request contains unsupported fields", 400)
+        selected = payload.get("scenario")
+        if "scenario" in payload and (not isinstance(selected, str) or not selected.strip()):
+            raise APIError("invalid_scenario", "scenario must be a non-empty catalog name", 400)
+        try:
+            report = run_evaluation(selected)
+        except UnknownScenarioError as exc:
+            raise APIError("unknown_scenario", "scenario is not in the evaluation catalog", 400) from exc
+        except EvaluationError as exc:
+            raise APIError("invalid_evaluation", "evaluation request could not be accepted", 400) from exc
+        except Exception as exc:
+            raise APIError("evaluation_failed", "evaluation could not be completed", 500) from exc
+        return jsonify(report)
 
     @app.post("/api/tasks")
     def create_task():

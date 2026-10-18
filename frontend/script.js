@@ -78,6 +78,8 @@
     submitting: false,
     actionPending: false,
     workspaceAvailable: false,
+    evaluationCatalog: [],
+    evaluationLoading: false,
   };
 
   const elements = {};
@@ -328,11 +330,171 @@
     }
   }
 
+  function setEvaluationState(stateName) {
+    elements.evaluationEmptyState.hidden = stateName !== "empty";
+    elements.evaluationLoadingState.hidden = stateName !== "loading";
+    elements.evaluationErrorState.hidden = stateName !== "error";
+    elements.evaluationResults.hidden = stateName !== "results";
+  }
+
+  function evaluationOutcomeText(outcome) {
+    if (!outcome || typeof outcome !== "object") {
+      return "Expected outcome unavailable.";
+    }
+    const details = [`status: ${displayValue(outcome.final_status, "unknown")}`];
+    if (outcome.requires_verification === true) {
+      details.push("verification evidence required");
+    }
+    if (outcome.requires_recovery_event === true) {
+      details.push("recovery event required");
+    }
+    if (outcome.requires_approval_pause === true) {
+      details.push("approval pause required");
+    }
+    if (typeof outcome.error_category === "string") {
+      details.push(`error: ${outcome.error_category}`);
+    }
+    return details.join(" · ");
+  }
+
+  function renderEvaluationCatalog(catalogDocument) {
+    const scenarios = Array.isArray(catalogDocument?.scenarios) ? catalogDocument.scenarios : [];
+    state.evaluationCatalog = scenarios;
+    elements.evaluationScenarioSelect.replaceChildren();
+    const allOption = document.createElement("option");
+    allOption.value = "";
+    allOption.textContent = "All catalog scenarios";
+    elements.evaluationScenarioSelect.append(allOption);
+    elements.evaluationCatalogList.replaceChildren();
+    scenarios.forEach((scenario) => {
+      const option = document.createElement("option");
+      option.value = displayValue(scenario?.name, "");
+      option.textContent = displayValue(scenario?.name, "Unnamed scenario");
+      elements.evaluationScenarioSelect.append(option);
+
+      const item = document.createElement("li");
+      item.className = "evaluation-catalog-item";
+      const heading = document.createElement("div");
+      heading.className = "evaluation-catalog-heading";
+      addText(heading, "strong", "evaluation-scenario-name", scenario?.name);
+      addText(heading, "span", "evaluation-expected", evaluationOutcomeText(scenario?.expected_outcome));
+      addText(item, "p", "evaluation-description", scenario?.description);
+      item.prepend(heading);
+      elements.evaluationCatalogList.append(item);
+    });
+    elements.evaluationScenarioSelect.disabled = scenarios.length === 0;
+    elements.runEvaluation.disabled = scenarios.length === 0 || state.evaluationLoading;
+    elements.evaluationModeLabel.textContent = catalogDocument?.offline === true && catalogDocument?.deterministic === true
+      ? "Offline mode: deterministic"
+      : "Offline mode: unavailable";
+    elements.evaluationCatalogCount.textContent = `${scenarios.length} ${scenarios.length === 1 ? "scenario" : "scenarios"}`;
+    if (scenarios.length) {
+      setEvaluationState("empty");
+    } else {
+      showEvaluationError("The API returned an empty evaluation catalog.");
+    }
+  }
+
+  function showEvaluationError(message) {
+    elements.evaluationErrorMessage.textContent = message || "The evaluation report could not be loaded.";
+    setEvaluationState("error");
+  }
+
+  function renderEvaluationCatalogFailure(error) {
+    state.evaluationCatalog = [];
+    elements.evaluationScenarioSelect.replaceChildren();
+    elements.evaluationScenarioSelect.disabled = true;
+    elements.runEvaluation.disabled = true;
+    elements.evaluationCatalogList.replaceChildren();
+    addText(elements.evaluationCatalogList, "li", "evaluation-empty", "Evaluation catalog unavailable.");
+    elements.evaluationCatalogCount.textContent = "Unavailable";
+    elements.evaluationModeLabel.textContent = "Offline mode: unavailable";
+    showEvaluationError(error?.message || "The evaluation catalog could not be loaded.");
+  }
+
+  function formatEvaluationRate(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return "—";
+    }
+    return `${(value * 100).toFixed(1)}%`;
+  }
+
+  function renderEvaluationReport(report) {
+    const results = Array.isArray(report?.scenario_results) ? report.scenario_results : [];
+    const summary = report?.summary && typeof report.summary === "object" ? report.summary : {};
+    elements.evaluationRunTimestamp.textContent = displayValue(report?.run_timestamp);
+    elements.evaluationCompletionRate.textContent = formatEvaluationRate(summary.completion_rate);
+    elements.evaluationRecoveryRate.textContent = formatEvaluationRate(summary.recovery_rate);
+    elements.evaluationVerificationRate.textContent = formatEvaluationRate(summary.verification_rate);
+    elements.evaluationResultCount.textContent = `${displayValue(summary.passed_count, "0")} passed / ${results.length} ${results.length === 1 ? "scenario" : "scenarios"}`;
+    elements.evaluationResultList.replaceChildren();
+    if (!results.length) {
+      addText(elements.evaluationResultList, "p", "evaluation-empty", "The API returned no scenario results.");
+    }
+    results.forEach((result) => {
+      const card = document.createElement("article");
+      card.className = `evaluation-result-card ${result?.passed === true ? "is-passed" : "is-failed"}`;
+      const header = document.createElement("div");
+      header.className = "evaluation-result-header";
+      const title = document.createElement("div");
+      addText(title, "h4", "", result?.name);
+      addText(title, "p", "evaluation-result-description", result?.description);
+      const stateLabel = result?.passed === true ? "Passed" : "Failed";
+      addText(header, "span", `evaluation-result-status ${result?.passed === true ? "is-passed" : "is-failed"}`, stateLabel);
+      header.prepend(title);
+      card.append(header);
+
+      const facts = document.createElement("dl");
+      facts.className = "evaluation-facts";
+      const elapsed = typeof result?.elapsed_seconds === "number" && Number.isFinite(result.elapsed_seconds)
+        ? `${result.elapsed_seconds.toFixed(6)} s`
+        : "—";
+      addDefinition(facts, "Elapsed", elapsed);
+      addDefinition(facts, "Final status", result?.final_status);
+      addDefinition(facts, "Error category", result?.error_category);
+      addDefinition(facts, "Recovery events", result?.recovery_event_count);
+      addDefinition(facts, "Completion events", result?.completion_event_count);
+      addOutputDefinition(facts, "Approval behavior", result?.approval_behavior);
+      addOutputDefinition(facts, "Expected checks", result?.expected_checks);
+      addOutputDefinition(facts, "Verification evidence", result?.verification_evidence);
+      card.append(facts);
+      elements.evaluationResultList.append(card);
+    });
+    elements.evaluationNote.textContent = displayValue(report?.notes, "");
+    setEvaluationState("results");
+  }
+
+  async function runEvaluation() {
+    if (state.evaluationLoading || !state.evaluationCatalog.length) {
+      return;
+    }
+    state.evaluationLoading = true;
+    elements.runEvaluation.disabled = true;
+    elements.evaluationScenarioSelect.disabled = true;
+    elements.runEvaluationLabel.textContent = "Running…";
+    setEvaluationState("loading");
+    setApiNotice("");
+    const selected = elements.evaluationScenarioSelect.value;
+    try {
+      const report = await postJson("/api/evaluation/run", selected ? { scenario: selected } : {});
+      renderEvaluationReport(report);
+    } catch (error) {
+      showEvaluationError(error?.message || "The evaluation could not be completed.");
+      setApiNotice(error?.message || "The evaluation could not be completed.");
+    } finally {
+      state.evaluationLoading = false;
+      elements.evaluationScenarioSelect.disabled = state.evaluationCatalog.length === 0;
+      elements.runEvaluation.disabled = state.evaluationCatalog.length === 0;
+      elements.runEvaluationLabel.textContent = "Run evaluation";
+    }
+  }
+
   async function loadSystemData() {
     const results = await Promise.allSettled([
       requestJson("/api/health"),
       requestJson("/api/capabilities"),
       requestJson("/api/provider/status"),
+      requestJson("/api/evaluation/scenarios"),
     ]);
     if (results[0].status === "fulfilled") {
       renderHealth(results[0].value);
@@ -351,6 +513,11 @@
       elements.capabilityProviderVerification.textContent = providerStatus.verified === true
         ? "Verified by backend"
         : displayValue(providerStatus.message, "Not verified");
+    }
+    if (results[3].status === "fulfilled") {
+      renderEvaluationCatalog(results[3].value);
+    } else {
+      renderEvaluationCatalogFailure(results[3].reason);
     }
   }
 
@@ -701,6 +868,25 @@
     elements.capabilityProvider = byId("capability-provider");
     elements.capabilityProviderModel = byId("capability-provider-model");
     elements.capabilityProviderVerification = byId("capability-provider-verification");
+    elements.evaluationModeLabel = byId("evaluation-mode-label");
+    elements.evaluationScenarioSelect = byId("evaluation-scenario-select");
+    elements.runEvaluation = byId("run-evaluation");
+    elements.runEvaluationLabel = byId("run-evaluation-label");
+    elements.evaluationCatalogPanel = byId("evaluation-catalog-panel");
+    elements.evaluationCatalogCount = byId("evaluation-catalog-count");
+    elements.evaluationCatalogList = byId("evaluation-catalog-list");
+    elements.evaluationEmptyState = byId("evaluation-empty-state");
+    elements.evaluationLoadingState = byId("evaluation-loading-state");
+    elements.evaluationErrorState = byId("evaluation-error-state");
+    elements.evaluationErrorMessage = byId("evaluation-error-message");
+    elements.evaluationResults = byId("evaluation-results");
+    elements.evaluationRunTimestamp = byId("evaluation-run-timestamp");
+    elements.evaluationCompletionRate = byId("evaluation-completion-rate");
+    elements.evaluationRecoveryRate = byId("evaluation-recovery-rate");
+    elements.evaluationVerificationRate = byId("evaluation-verification-rate");
+    elements.evaluationResultCount = byId("evaluation-result-count");
+    elements.evaluationResultList = byId("evaluation-result-list");
+    elements.evaluationNote = byId("evaluation-note");
   }
 
   function init() {
@@ -709,6 +895,7 @@
     elements.scenarioMode.addEventListener("change", updateModeHelp);
     elements.goalForm.addEventListener("submit", submitTask);
     elements.cancelTask.addEventListener("click", cancelTask);
+    elements.runEvaluation.addEventListener("click", runEvaluation);
     updateModeHelp();
     renderEmptyState();
     renderCapabilities({
@@ -716,6 +903,11 @@
       execution_mode: "loading",
       provider_status: { message: "Checking backend provider status." },
     });
+    setEvaluationState("empty");
+    elements.evaluationModeLabel.textContent = "Offline mode: checking";
+    elements.evaluationCatalogCount.textContent = "Loading";
+    elements.evaluationCatalogList.replaceChildren();
+    addText(elements.evaluationCatalogList, "li", "evaluation-empty", "Loading the actual catalog from the API.");
     void loadSystemData();
   }
 

@@ -385,6 +385,19 @@ h3 {
   grid-template-columns: minmax(0, 1.35fr) minmax(270px, 0.65fr);
 }
 
+.evaluation-mode-chip {
+  padding: 8px 10px;
+  color: var(--violet);
+  border: 1px solid rgba(168, 149, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(168, 149, 255, 0.06);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -997,7 +1010,8 @@ code {
 }
 
 .timeline-empty,
-.tool-empty {
+.tool-empty,
+.evaluation-empty {
   color: var(--muted);
   font-size: 12px;
 }
@@ -1051,6 +1065,225 @@ code {
   margin: 21px 0 0;
   color: var(--muted);
   border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.evaluation-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 24px;
+  margin-bottom: 18px;
+  border-color: rgba(168, 149, 255, 0.2);
+  background: linear-gradient(145deg, rgba(25, 22, 47, 0.72), rgba(13, 18, 30, 0.94));
+}
+
+.evaluation-toolbar .panel-kicker {
+  margin-bottom: 17px;
+}
+
+.evaluation-toolbar > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.evaluation-toolbar select {
+  max-width: 520px;
+}
+
+.evaluation-catalog {
+  padding: 24px;
+  margin-bottom: 18px;
+}
+
+.evaluation-catalog .panel-header {
+  margin-bottom: 16px;
+}
+
+.evaluation-catalog-list {
+  display: grid;
+  gap: 9px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.evaluation-catalog-item {
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(7, 12, 20, 0.5);
+}
+
+.evaluation-catalog-heading,
+.evaluation-result-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.evaluation-scenario-name {
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+
+.evaluation-expected {
+  color: var(--violet);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-align: right;
+}
+
+.evaluation-description,
+.evaluation-result-description {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.evaluation-state {
+  display: grid;
+  place-items: center;
+  min-height: 190px;
+  padding: 30px;
+  margin-bottom: 24px;
+  text-align: center;
+  background: var(--panel-soft);
+}
+
+.evaluation-state h3 {
+  margin-bottom: 7px;
+}
+
+.evaluation-state p {
+  max-width: 620px;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.evaluation-error-state {
+  border-color: rgba(255, 134, 145, 0.27);
+}
+
+.loading-glyph {
+  width: 24px;
+  height: 24px;
+  margin-bottom: 13px;
+  border: 2px solid rgba(98, 230, 237, 0.25);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: evaluation-spin 900ms linear infinite;
+}
+
+@keyframes evaluation-spin {
+  to { transform: rotate(360deg); }
+}
+
+.evaluation-results {
+  display: grid;
+  gap: 18px;
+}
+
+.evaluation-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 18px;
+  background: rgba(14, 21, 32, 0.76);
+}
+
+.metric-card span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.metric-card strong {
+  color: var(--cyan);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 17px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.evaluation-results-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 9px;
+}
+
+.evaluation-results-header h3 {
+  margin-bottom: 0;
+}
+
+.evaluation-result-list {
+  display: grid;
+  gap: 12px;
+}
+
+.evaluation-result-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--red);
+  border-radius: 11px;
+  background: rgba(7, 12, 20, 0.55);
+}
+
+.evaluation-result-card.is-passed {
+  border-left-color: var(--green);
+}
+
+.evaluation-result-header {
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.evaluation-result-header h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.evaluation-result-status {
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 134, 145, 0.3);
+  border-radius: 999px;
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.evaluation-result-status.is-passed {
+  color: var(--green);
+  border-color: rgba(117, 224, 172, 0.32);
+}
+
+.evaluation-facts {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.evaluation-note {
+  margin: 0;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -1135,6 +1368,10 @@ code {
   .runbook-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .evaluation-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 800px) {
@@ -1209,6 +1446,15 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .evaluation-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .evaluation-toolbar select {
+    max-width: none;
+  }
+
   .composer-footer,
   .task-overview,
   .limitations-banner {
@@ -1255,8 +1501,19 @@ code {
   }
 
   .tool-list,
-  .runbook-grid {
+  .runbook-grid,
+  .evaluation-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .evaluation-catalog-heading,
+  .evaluation-result-header {
+    display: grid;
+    gap: 6px;
+  }
+
+  .evaluation-expected {
+    text-align: left;
   }
 
   .system-strip {

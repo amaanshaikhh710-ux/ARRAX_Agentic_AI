@@ -4,7 +4,7 @@
 
 ## Project status
 
-The provider milestone is implemented as an optional, server-side Gemini planning boundary on top of the deterministic core. The destination repository contains the task model, deterministic and structured planners, allowlisted fixture tools, opt-in bounded workspace tools, orchestrator, SQLite persistence, bounded local workers, frontend, provider status API, and offline pytest coverage described below.
+The provider milestone is implemented as an optional, server-side Gemini planning boundary on top of the deterministic core. The destination repository contains the task model, deterministic and structured planners, allowlisted fixture tools, opt-in bounded workspace tools, orchestrator, SQLite persistence, bounded local workers, frontend, provider status API, an honest offline Evaluation Lab, and reproducible test packaging.
 
 The application is intentionally being built as a fresh implementation. Completed work is marked explicitly as it is added and verified.
 
@@ -51,6 +51,8 @@ Currently implemented:
 - Safe DOM rendering for user and API text, persisted event timeline, plan-step evidence, approval controls, cancellation, and API/provider availability states.
 - Opt-in workspace tools for bounded listing, UTF-8 text reading, text search, deterministic readiness-report creation, and actual-file verification. They are absent from the registry unless `ARRAX_WORKSPACE_ROOT` or an explicit workspace-root argument is configured.
 - A deterministic `workspace_report` goal that snapshots the approved root, pauses before the sensitive report write, then verifies the generated file from disk.
+- A deterministic Evaluation Lab catalog and synchronous report API covering verified success, bounded recovery, approval gates, verification guards, and timeout boundaries. Each run uses a fresh in-memory core and records measured evidence rather than fabricated benchmark values.
+- A pinned `python:3.13.1-slim-bookworm` Docker test image, `.dockerignore`, lockfile installation, and documented judge-style offline test command.
 
 Not yet implemented:
 
@@ -61,14 +63,14 @@ Not yet implemented:
 
 The following foundation is configured for the core and future application layers:
 
-- **Core:** Python 3.12 or newer with the standard library; the core does not require Flask.
+- **Core:** Python 3.13.1 as declared in `.python-version`, with the standard library; the core does not require Flask.
 - **Backend:** Flask provides the local HTTP boundary around the core.
 - **Frontend:** Server-served HTML, CSS, and vanilla JavaScript.
 - **Tests:** `pytest` with mocks for external providers and unsafe tools.
 - **Persistence:** Local SQLite through the Python standard library.
-- **Packaging:** Pinned dependency manifests, a Python version declaration, and a future Dockerfile suitable for offline test execution.
+- **Packaging:** Pinned dependency manifests, a Python version declaration, and a Dockerfile suitable for offline test execution.
 
-The current dependency files are `requirements.txt`, `requirements-dev.txt`, and `requirements.lock`. The supported local interpreter is pinned in `.python-version`.
+The current dependency files are `requirements.txt`, `requirements-dev.txt`, and `requirements.lock`. The supported local interpreter is pinned in `.python-version` as Python 3.13.1. The Dockerfile uses the compatible `python:3.13.1-slim-bookworm` image and installs the lockfile directly.
 
 The baseline may be adjusted if the implementation or buildathon rebuild constraints demonstrate a better, smaller option. No framework or external service will be added only for visual polish.
 
@@ -111,6 +113,7 @@ ARRAX_Agentic_AI/
 │   ├── workspace.py       # opt-in root-scoped workspace tools and verifiers
 │   ├── storage.py         # SQLite repositories and schema
 │   ├── orchestrator.py    # synchronous lifecycle and policy flow
+│   ├── evaluation.py      # deterministic offline regression catalog and runner
 │   └── api.py             # Flask factory, serialization, workers, and dashboard serving
 ├── frontend/
 │   ├── index.html         # server-served command center
@@ -119,7 +122,7 @@ ARRAX_Agentic_AI/
 ├── tests/                 # offline lifecycle and boundary tests
 ├── .env.example           # safe empty configuration template
 ├── .gitignore              # excludes secrets and runtime data
-├── Dockerfile             # future reproducible build/test environment
+├── Dockerfile             # pinned-Python offline build/test environment
 ├── .python-version         # supported Python version
 ├── requirements.txt        # runtime dependencies
 ├── requirements-dev.txt    # development/test dependencies
@@ -248,6 +251,37 @@ verified, deterministic fallback, missing-key, unavailable-model, rate-limit,
 timeout, network, and invalid-response states without returning the external
 response body.
 
+### Offline Evaluation Lab
+
+The Evaluation Lab is a deterministic regression evaluation, not a production
+performance benchmark. It does not call Gemini, use the configured workspace,
+or read the application's SQLite database. The catalog endpoint reports the
+actual bounded scenarios and their expected outcomes:
+
+```text
+GET /api/evaluation/scenarios
+```
+
+Run all scenarios with `{}` or run one catalog name. The route is deliberately
+synchronous because the five fixture scenarios are small and bounded:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -c "from arrax.evaluation import run_evaluation; print(run_evaluation())"
+
+# HTTP form, with the local app already running:
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/evaluation/run `
+  -ContentType "application/json" -Body '{}'
+```
+
+The report includes each measured elapsed duration, final status, expected
+checks, verification evidence, recovery event count, approval behavior, error
+category, and summary counts/rates. Its measured durations are local regression
+observations only; the report makes no production throughput or latency claim.
+The dashboard's **Evaluation Lab** section uses these same endpoints and shows
+loading, empty, error, catalog, and actual report states without simulated
+values.
+
 To run the local dashboard with Flask's development server, keep the binding
 local and use an explicit non-debug command:
 
@@ -314,7 +348,10 @@ The project does not claim MySQL compatibility; SQLite is the deliberate local p
 
 ## Running the application
 
-Milestone 4 adds the opt-in workspace report flow on top of the local dashboard. Use the application factory shown above, configure an approved root when the real report demo is desired, then run the offline test suite.
+The current milestone adds the opt-in workspace report flow, provider status,
+and the offline Evaluation Lab on top of the local dashboard. Use the
+application factory shown above, configure an approved root when the real
+report demo is desired, then run the offline test suite.
 
 The default development mode is expected to be local-only and safe. Network exposure, authentication, and any platform-specific adapters will be addressed explicitly rather than enabled by default.
 
@@ -334,6 +371,18 @@ node --check frontend/script.js
 python -m compileall -q src tests
 git diff --check
 ```
+
+For a Docker judge-style run, build the pinned-Python image and execute its
+safe test default with network access disabled:
+
+```text
+docker build --pull=false --tag arrax-offline .
+docker run --rm --network=none arrax-offline
+```
+
+Docker validation is run only when the `docker` command is available in the
+validation environment. If Docker is unavailable, report that fact and do not
+install it as part of the offline checks.
 
 Provider tests use fake transports and fake providers only. The automated test
 suite never performs a live Gemini request.
@@ -409,7 +458,9 @@ The current known limitations are:
   a backup, security scan, or proof that files are safe to execute.
 - No authentication or production deployment is supported.
 - The final supported platform has not yet been validated.
-- No Dockerfile or Docker validation exists yet.
+- Docker validation is environment-dependent; the documented judge-style build
+  and network-disabled test run is not claimed as executed when Docker is not
+  available.
 
 These items will be removed from this list only after implementation and verification.
 
@@ -422,8 +473,8 @@ These items will be removed from this list only after implementation and verific
 5. Add cancellation, timeouts, and result verification. **Complete.**
 6. Add an opt-in bounded workspace report flow with actual verifiers. **Complete.**
 7. Add optional AI planning behind strict schema and permission validation. **Complete.**
-8. Add optional platform adapters only after the core workflow is tested.
-9. Validate the project in a clean Docker environment with network access disabled for tests.
+8. Add an offline deterministic Evaluation Lab and reproducibility foundation. **Complete.**
+9. Add optional platform adapters only after the core workflow is tested.
 
 ## Contribution guidance
 

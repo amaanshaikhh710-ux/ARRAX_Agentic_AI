@@ -117,10 +117,64 @@ def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
         "/events",
         "/approve",
         "/cancel",
+        "/api/evaluation/scenarios",
+        "/api/evaluation/run",
     ):
         assert path in script
     assert "innerHTML" not in script
     assert "textContent" in script
+
+
+def test_evaluation_lab_routes_expose_catalog_and_measured_report(client):
+    catalog_response = client.get("/api/evaluation/scenarios")
+
+    assert catalog_response.status_code == 200
+    catalog = catalog_response.get_json()
+    assert catalog["evaluation_type"] == "deterministic_regression"
+    assert catalog["mode"] == "offline_deterministic"
+    assert catalog["deterministic"] is True
+    assert catalog["offline"] is True
+    assert [scenario["name"] for scenario in catalog["scenarios"]] == [
+        "verified_success",
+        "self_healing_recovery",
+        "approval_gate",
+        "verification_guard",
+        "timeout_boundary",
+    ]
+    assert all("description" in scenario and "expected_outcome" in scenario for scenario in catalog["scenarios"])
+
+    selected = client.post("/api/evaluation/run", json={"scenario": "approval_gate"})
+
+    assert selected.status_code == 200
+    report = selected.get_json()
+    assert report["scenario_results"][0]["name"] == "approval_gate"
+    assert report["scenario_results"][0]["passed"] is True
+    assert report["summary"]["scenario_count"] == 1
+    assert report["summary"]["pass_rate"] == 1.0
+
+    all_results = client.post("/api/evaluation/run", json={})
+    assert all_results.status_code == 200
+    assert all_results.get_json()["summary"]["scenario_count"] == 5
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        ({"scenario": "unknown"}, "unknown_scenario"),
+        ({"scenario": None}, "invalid_scenario"),
+        ({"extra": True}, "invalid_request"),
+    ],
+)
+def test_evaluation_routes_reject_unknown_names_and_fields(client, payload, code):
+    response = client.post("/api/evaluation/run", json=payload)
+
+    assert response.status_code == 400
+    body = response.get_json()
+    assert set(body) == {"error"}
+    assert set(body["error"]) == {"code", "message"}
+    assert body["error"]["code"] == code
+    assert body["error"]["message"]
+    assert "Traceback" not in response.get_data(as_text=True)
 
 
 def test_missing_frontend_returns_structured_404_without_crashing(tmp_path, monkeypatch):

@@ -27,16 +27,20 @@
             <span class="nav-index">01</span>
             <span>Command Center</span>
           </button>
-          <button class="nav-item" type="button" data-section-target="live-console">
-            <span class="nav-index">02</span>
-            <span>Live Console</span>
-          </button>
-          <button class="nav-item" type="button" data-section-target="security-capabilities">
+           <button class="nav-item" type="button" data-section-target="live-console">
+             <span class="nav-index">02</span>
+             <span>Live Console</span>
+           </button>
+          <button class="nav-item" type="button" data-section-target="evaluation-lab">
             <span class="nav-index">03</span>
+            <span>Evaluation Lab</span>
+          </button>
+           <button class="nav-item" type="button" data-section-target="security-capabilities">
+            <span class="nav-index">04</span>
             <span>Security &amp; Capabilities</span>
           </button>
-          <button class="nav-item" type="button" data-section-target="runbook">
-            <span class="nav-index">04</span>
+           <button class="nav-item" type="button" data-section-target="runbook">
+            <span class="nav-index">05</span>
             <span>Runbook / How it works</span>
           </button>
         </nav>
@@ -195,13 +199,87 @@
                   <ol class="timeline-list" id="timeline-list" aria-live="polite"></ol>
                 </section>
               </div>
+           </div>
+          </section>
+
+          <section class="section-block evaluation-section" id="evaluation-lab" data-section="evaluation-lab" aria-labelledby="evaluation-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow accent-eyebrow">03 / reproduce the safe regression suite</p>
+                <h2 id="evaluation-title">Evaluation Lab</h2>
+                <p class="section-intro">Run the actual deterministic fixture scenarios in fresh in-memory cores. Durations are local regression measurements, not production performance claims.</p>
+              </div>
+              <div class="evaluation-mode-chip" id="evaluation-mode-label">Offline mode: loading</div>
+            </div>
+
+            <div class="evaluation-toolbar panel">
+              <div>
+                <div class="panel-kicker">
+                  <span class="kicker-line violet-line" aria-hidden="true"></span>
+                  <span>Cataloged scenarios</span>
+                </div>
+                <label for="evaluation-scenario-select">Scenario selection</label>
+                <select id="evaluation-scenario-select" name="evaluation-scenario-select" disabled>
+                  <option value="">All catalog scenarios</option>
+                </select>
+                <p class="field-help">The API owns the catalog and expected outcomes. Selecting one scenario keeps the run bounded and reproducible.</p>
+              </div>
+              <button class="primary-button" id="run-evaluation" type="button" disabled>
+                <span class="button-orbit" aria-hidden="true"></span>
+                <span id="run-evaluation-label">Run evaluation</span>
+              </button>
+            </div>
+
+            <div class="evaluation-catalog panel" id="evaluation-catalog-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Actual catalog</p>
+                  <h3>Expected outcomes</h3>
+                </div>
+                <span class="panel-count" id="evaluation-catalog-count">Loading</span>
+              </div>
+              <ul class="evaluation-catalog-list" id="evaluation-catalog-list"></ul>
+            </div>
+
+            <div class="evaluation-state panel" id="evaluation-empty-state">
+              <div class="empty-glyph" aria-hidden="true">[]</div>
+              <h3>Evaluation has not been run.</h3>
+              <p>Load the actual scenario catalog, then run all scenarios or select one above.</p>
+            </div>
+            <div class="evaluation-state panel" id="evaluation-loading-state" hidden>
+              <div class="loading-glyph" aria-hidden="true"></div>
+              <h3>Running deterministic evaluation…</h3>
+              <p>Each scenario is executing locally in a fresh in-memory core. This route is synchronous and bounded.</p>
+            </div>
+            <div class="evaluation-state panel evaluation-error-state" id="evaluation-error-state" hidden>
+              <div class="empty-glyph" aria-hidden="true">!</div>
+              <h3>Evaluation unavailable.</h3>
+              <p id="evaluation-error-message">The evaluation report could not be loaded.</p>
+            </div>
+
+            <div class="evaluation-results" id="evaluation-results" hidden>
+              <div class="evaluation-summary-grid">
+                <div class="metric-card panel"><span>Run timestamp</span><strong id="evaluation-run-timestamp">—</strong></div>
+                <div class="metric-card panel"><span>Completion rate</span><strong id="evaluation-completion-rate">—</strong></div>
+                <div class="metric-card panel"><span>Recovery rate</span><strong id="evaluation-recovery-rate">—</strong></div>
+                <div class="metric-card panel"><span>Verification rate</span><strong id="evaluation-verification-rate">—</strong></div>
+              </div>
+              <div class="evaluation-results-header">
+                <div>
+                  <p class="eyebrow">Measured report</p>
+                  <h3>Scenario results</h3>
+                </div>
+                <span class="panel-count" id="evaluation-result-count">—</span>
+              </div>
+              <div class="evaluation-result-list" id="evaluation-result-list"></div>
+              <p class="evaluation-note" id="evaluation-note"></p>
             </div>
           </section>
 
           <section class="section-block capabilities-section" id="security-capabilities" data-section="security-capabilities" aria-labelledby="capabilities-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">03 / inspect the boundary</p>
+                <p class="eyebrow accent-eyebrow">04 / inspect the boundary</p>
                 <h2 id="capabilities-title">Security &amp; Capabilities</h2>
                  <p class="section-intro">This inventory is loaded from <code>/api/capabilities</code>; provider labels reflect backend verification, never a browser assumption.</p>
               </div>
@@ -238,7 +316,7 @@
           <section class="section-block runbook-section" id="runbook" data-section="runbook" aria-labelledby="runbook-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow accent-eyebrow">04 / understand the loop</p>
+                <p class="eyebrow accent-eyebrow">05 / understand the loop</p>
                 <h2 id="runbook-title">Runbook / How it works</h2>
                 <p class="section-intro">A concise view of the lifecycle that this local dashboard actually exercises.</p>
               </div>
