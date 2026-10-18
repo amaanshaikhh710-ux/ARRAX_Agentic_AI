@@ -43,7 +43,7 @@
 
         <div class="sidebar-footnote">
           <span class="pulse-dot" aria-hidden="true"></span>
-          <span>Local deterministic surface</span>
+           <span>Backend-reported provider state</span>
         </div>
       </aside>
 
@@ -79,11 +79,11 @@
               <div>
                 <p class="eyebrow accent-eyebrow">01 / initiate a controlled run</p>
                 <h2 id="command-title">Give the deterministic core a scenario.</h2>
-                <p class="section-intro">Compose a bounded demo goal, inspect its plan, and follow persisted execution evidence as it arrives.</p>
+               <p class="section-intro">Compose a bounded scenario, inspect its plan, and follow persisted execution evidence as it arrives.</p>
               </div>
               <div class="mode-chip" aria-label="Current execution mode">
                 <span class="chip-dot" aria-hidden="true"></span>
-                <span>DETERMINISTIC LOCAL</span>
+                 <span id="mode-chip-label">DETERMINISTIC LOCAL</span>
               </div>
             </div>
 
@@ -107,7 +107,7 @@
                 <div class="field-group">
                   <label for="scenario-context">Scenario message or key <span class="label-optional">(optional)</span></label>
                   <textarea id="scenario-context" name="scenario-context" rows="4" maxlength="500" placeholder="e.g. Verify the local handoff"></textarea>
-                  <p class="field-help">Natural-language interpretation and provider integration are deferred. This text is adapted into the selected deterministic goal field.</p>
+                   <p class="field-help">The selected scenario remains deterministic at the input boundary. This text is adapted into its structured goal field.</p>
                 </div>
                 <div class="composer-footer">
                   <p class="form-status" id="form-status" role="status"></p>
@@ -132,7 +132,7 @@
                 </ul>
                 <div class="deferred-note">
                   <span class="deferred-label">Deferred</span>
-                  <span>AI providers, desktop automation, and unrestricted actions.</span>
+                   <span>Unverified providers, desktop automation, and unrestricted actions.</span>
                 </div>
               </aside>
             </div>
@@ -203,7 +203,7 @@
               <div>
                 <p class="eyebrow accent-eyebrow">03 / inspect the boundary</p>
                 <h2 id="capabilities-title">Security &amp; Capabilities</h2>
-                <p class="section-intro">This inventory is loaded from <code>/api/capabilities</code>; it contains only tools registered by the injected core.</p>
+                 <p class="section-intro">This inventory is loaded from <code>/api/capabilities</code>; provider labels reflect backend verification, never a browser assumption.</p>
               </div>
             </div>
             <div class="capabilities-grid">
@@ -225,10 +225,12 @@
                 <dl class="capability-details">
                   <div><dt>Execution mode</dt><dd id="capability-execution">Loading</dd></div>
                   <div><dt>Provider mode</dt><dd id="capability-provider">Loading</dd></div>
+                  <div><dt>Configured model</dt><dd id="capability-provider-model">Loading</dd></div>
+                  <div><dt>Provider verification</dt><dd id="capability-provider-verification">Loading</dd></div>
                   <div><dt>Approval boundary</dt><dd>Core-enforced</dd></div>
                   <div><dt>Verification</dt><dd>Required for completion</dd></div>
                 </dl>
-                <p class="deferred-copy">External providers and platform adapters are deferred. The dashboard does not imply AI connectivity.</p>
+                 <p class="deferred-copy">Gemini is optional and account-dependent. The dashboard shows it as verified only when the backend has checked the exact model and completed its canary.</p>
               </div>
             </div>
           </section>
@@ -245,7 +247,7 @@
               <article class="runbook-step panel">
                 <span class="runbook-number">01</span>
                 <h3>Compose</h3>
-                <p>The selected mode becomes a structured goal accepted by the deterministic planner. Natural-language interpretation is deferred.</p>
+                <p>The selected mode becomes a structured goal. Deterministic scenarios remain available regardless of provider configuration.</p>
               </article>
               <article class="runbook-step panel">
                 <span class="runbook-number">02</span>
@@ -266,16 +268,16 @@
             <div class="limitations-banner panel">
               <div>
                 <p class="eyebrow">Current limitations</p>
-                <h3>Local and deterministic by design.</h3>
+                <h3>Controlled and honest by design.</h3>
               </div>
-              <p>No authentication, external provider, desktop automation, unrestricted shell/filesystem access, or production deployment is included. The workspace report mode appears only when the API explicitly exposes an approved ARRAX_WORKSPACE_ROOT.</p>
+              <p>No authentication, desktop automation, unrestricted shell/filesystem access, or production deployment is included. Gemini is used only after backend verification; the workspace report mode appears only when the API explicitly exposes an approved ARRAX_WORKSPACE_ROOT.</p>
             </div>
           </section>
         </main>
 
         <footer class="site-footer">
           <span>ARRAX / controlled local execution</span>
-          <span>Provider mode: none</span>
+          <span id="footer-provider-status">Provider status: checking</span>
         </footer>
       </div>
     </div>

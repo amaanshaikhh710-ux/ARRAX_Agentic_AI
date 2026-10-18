@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from .domain import PlanStep, RiskLevel, Task, TaskStatus
 from .planner import DeterministicPlanner, PlanningError
+from .provider import GeminiProvider, HybridPlanner, ProviderConfig, ProviderMode, ProviderStatus, _coerce_status
 from .storage import Event, SQLiteStore, utc_now
 from .tools import ToolInputError, ToolRegistry, UnknownToolError, default_registry
 from .workspace import normalize_workspace_root
@@ -35,7 +36,9 @@ class AgentCore:
         *,
         store: SQLiteStore | None = None,
         registry: ToolRegistry | None = None,
-        planner: DeterministicPlanner | None = None,
+        planner: Any | None = None,
+        provider: Any | None = None,
+        provider_config: ProviderConfig | None = None,
         max_timeout_seconds: float = 10.0,
         workspace_root: str | None = None,
     ) -> None:
@@ -44,10 +47,66 @@ class AgentCore:
         self.registry = registry or default_registry(self.workspace_root)
         if self.workspace_root is None and any(name.startswith("workspace.") for name in self.registry.names()):
             raise ValueError("workspace tools require an explicitly configured workspace_root")
-        self.planner = planner or DeterministicPlanner(workspace_enabled=self.workspace_root is not None)
+        deterministic_planner = DeterministicPlanner(workspace_enabled=self.workspace_root is not None)
+        if planner is None:
+            configured_provider = provider if provider is not None else GeminiProvider(provider_config or ProviderConfig.from_env())
+            self.provider = configured_provider
+            self.planner = HybridPlanner(
+                deterministic_planner,
+                configured_provider,
+                registry=self.registry,
+            )
+        else:
+            self.planner = planner
+            self.provider = provider
         self.max_timeout_seconds = max_timeout_seconds
         self._active_lock = threading.RLock()
         self._active_tokens: dict[str, CancellationToken] = {}
+
+    @property
+    def provider_status(self) -> dict[str, Any]:
+        """Return safe provider state without triggering verification or I/O."""
+
+        if isinstance(self.planner, HybridPlanner):
+            return self.planner.status().to_dict()
+        if self.provider is not None:
+            status = self.provider.status() if callable(getattr(self.provider, "status", None)) else getattr(self.provider, "status", None)
+            if isinstance(status, ProviderStatus):
+                return status.to_dict()
+            if isinstance(status, Mapping):
+                provider_config = getattr(self.provider, "config", None)
+                return _coerce_status(
+                    status,
+                    config_mode=getattr(provider_config, "mode", ProviderMode.DETERMINISTIC),
+                    model=getattr(provider_config, "model", ProviderConfig().model),
+                ).to_dict()
+        return ProviderStatus(
+            mode=ProviderMode.DETERMINISTIC,
+            configured=False,
+            verified=False,
+            model=ProviderConfig().model,
+            message="Deterministic planner selected; Gemini is disabled.",
+            last_mode=ProviderMode.DETERMINISTIC,
+            configured_mode=ProviderMode.DETERMINISTIC,
+        ).to_dict()
+
+    def verify_provider(self) -> dict[str, Any]:
+        """Explicitly verify the configured provider, if one is available."""
+
+        if isinstance(self.planner, HybridPlanner):
+            return self.planner.verify_provider().to_dict()
+        if self.provider is not None and callable(getattr(self.provider, "verify", None)):
+            result = self.provider.verify()
+            if isinstance(result, ProviderStatus):
+                return result.to_dict()
+            if isinstance(result, Mapping):
+                provider_config = getattr(self.provider, "config", None)
+                return _coerce_status(
+                    result,
+                    config_mode=getattr(provider_config, "mode", ProviderMode.DETERMINISTIC),
+                    model=getattr(provider_config, "model", ProviderConfig().model),
+                ).to_dict()
+        return self.provider_status
 
     def create_task(self, goal: Mapping[str, Any]) -> Task:
         """Persist a queued task and its deterministic plan."""
@@ -70,7 +129,11 @@ class AgentCore:
             plan = self.planner.plan(task.goal)
             task = task.with_updates(plan=plan, status=TaskStatus.QUEUED, error=None)
             self.store.steps.replace_for_task(task.task_id, plan)
-            task = self._save_task(task, "plan.created", {"step_count": len(plan)})
+            plan_event = {"step_count": len(plan)}
+            provider_status = self.provider_status
+            if provider_status.get("last_mode"):
+                plan_event["planner_mode"] = provider_status["last_mode"]
+            task = self._save_task(task, "plan.created", plan_event)
             if isinstance(goal_type, str) and goal_type.strip().lower() in {
                 "workspace_report",
                 "workspace_readiness_report",
@@ -115,6 +178,9 @@ class AgentCore:
             return self._run(task, token)
         finally:
             watcher_stop.set()
+            # Do not let the short-lived watcher query SQLite after an
+            # embedding test or application closes the store.
+            watcher.join(timeout=0.2)
             with self._active_lock:
                 self._active_tokens.pop(task_id, None)
 
@@ -504,7 +570,20 @@ class AgentCore:
         return exc.__class__.__name__
 
 
-def create_default_core(db_path: str = ":memory:", *, workspace_root: str | None = None) -> AgentCore:
-    """Convenience factory for the public offline API."""
+def create_default_core(
+    db_path: str = ":memory:",
+    *,
+    workspace_root: str | None = None,
+    planner: Any | None = None,
+    provider: Any | None = None,
+    provider_config: ProviderConfig | None = None,
+) -> AgentCore:
+    """Convenience factory for the public API."""
 
-    return AgentCore(db_path=db_path, workspace_root=workspace_root)
+    return AgentCore(
+        db_path=db_path,
+        workspace_root=workspace_root,
+        planner=planner,
+        provider=provider,
+        provider_config=provider_config,
+    )

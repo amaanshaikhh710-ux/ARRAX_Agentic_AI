@@ -1,9 +1,9 @@
 """Flask HTTP boundary for the deterministic ARRAX agent core.
 
-This module deliberately contains no provider, network, desktop, or shell
-integration.  It validates JSON requests, delegates policy decisions to
-``AgentCore``, and schedules synchronous core runs on a bounded local worker
-pool.
+This module validates JSON requests, delegates policy decisions to
+``AgentCore``, exposes safe provider status, and schedules synchronous core
+runs on a bounded local worker pool. Provider verification remains explicit and
+is never triggered by health polling.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from .domain import DomainValidationError, PlanStep, Task, TaskStatus
 from .orchestrator import AgentCore, TaskNotFoundError
 from .planner import PlanningError
+from .provider import ProviderConfig, ProviderConfigError
 from .storage import Event
 from .workspace import normalize_workspace_root
 
@@ -305,9 +306,11 @@ def create_app(
     *,
     db_path: str | None = None,
     workspace_root: str | os.PathLike[str] | None = None,
+    planner: Any | None = None,
+    provider: Any | None = None,
     config: Mapping[str, Any] | None = None,
 ) -> Flask:
-    """Create the local deterministic Flask application.
+    """Create the local Flask application without verifying a provider.
 
     ``core`` is injectable for isolated tests.  Without one, the factory
     creates an ``AgentCore`` backed by ``ARRAX_DB_PATH`` (or ``db_path`` and
@@ -324,6 +327,9 @@ def create_app(
         MAX_CONTENT_LENGTH=DEFAULT_MAX_CONTENT_LENGTH,
         ARRAX_DB_PATH=db_path or ":memory:",
         ARRAX_WORKSPACE_ROOT=None,
+        ARRAX_AI_MODE=os.getenv("ARRAX_AI_MODE", "auto"),
+        GEMINI_API_KEY=os.getenv("GEMINI_API_KEY"),
+        GEMINI_MODEL=os.getenv("GEMINI_MODEL"),
         ARRAX_MAX_WORKERS=DEFAULT_MAX_WORKERS,
         ARRAX_MAX_QUEUE=DEFAULT_MAX_QUEUE,
     )
@@ -341,9 +347,20 @@ def create_app(
 
     owns_core = core is None
     if core is None:
+        try:
+            provider_config = ProviderConfig.from_values(
+                mode=app.config.get("ARRAX_AI_MODE"),
+                api_key=app.config.get("GEMINI_API_KEY"),
+                model=app.config.get("GEMINI_MODEL"),
+            )
+        except ProviderConfigError as exc:
+            raise ValueError(str(exc)) from exc
         core = AgentCore(
             db_path=str(app.config["ARRAX_DB_PATH"]),
             workspace_root=configured_workspace_root,
+            planner=planner,
+            provider=provider,
+            provider_config=provider_config,
         )
     elif configured_workspace_root is not None and getattr(core, "workspace_root", None) is None:
         raise ValueError("workspace_root must be configured on an injected AgentCore")
@@ -373,6 +390,7 @@ def create_app(
         "worker_manager": manager,
         "shutdown": shutdown,
         "owns_core": owns_core,
+        "provider_status": lambda: core.provider_status,
     }
 
     @app.errorhandler(APIError)
@@ -429,26 +447,48 @@ def create_app(
 
     @app.get("/api/health")
     def health():
+        provider_status = core.provider_status
         return jsonify(
             {
                 "service": "arrax-api",
                 "status": "ready",
                 "ready": True,
                 "execution_mode": "deterministic_local",
-                "provider_mode": "none",
+                "provider_mode": provider_status["mode"],
+                "provider_status": provider_status,
+                "configured_model": provider_status["model"],
             }
         )
 
     @app.get("/api/capabilities")
     def capabilities():
+        provider_status = core.provider_status
         payload = {
             "tools": list(core.registry.names()),
             "execution_mode": "deterministic_local",
-            "provider_mode": "none",
+            "provider_mode": provider_status["mode"],
+            "provider_status": provider_status,
+            "configured_model": provider_status["model"],
         }
         if getattr(core, "workspace_root", None) is not None:
             payload["workspace_enabled"] = True
         return jsonify(payload)
+
+    @app.get("/api/provider/status")
+    def provider_status():
+        """Return safe provider state; verification is opt-in per request."""
+
+        raw_verify = request.args.get("verify")
+        verify = False
+        if raw_verify is not None:
+            if raw_verify in {"1", "true", "yes"}:
+                verify = True
+            elif raw_verify in {"0", "false", "no"}:
+                verify = False
+            else:
+                raise APIError("invalid_verify", "verify must be 0 or 1", 400)
+        status = core.verify_provider() if verify else core.provider_status
+        return jsonify({**status, "verification_requested": verify})
 
     @app.post("/api/tasks")
     def create_task():

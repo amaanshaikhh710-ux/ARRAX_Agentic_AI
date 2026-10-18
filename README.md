@@ -4,7 +4,7 @@
 
 ## Project status
 
-Milestones 1 through 4 are implemented as a small, offline deterministic agent core with a Flask API boundary and a server-served vanilla dashboard. The destination repository contains the task model, planner, allowlisted fixture tools, opt-in bounded workspace tools, orchestrator, SQLite persistence, bounded local workers, frontend, and pytest coverage described below.
+The provider milestone is implemented as an optional, server-side Gemini planning boundary on top of the deterministic core. The destination repository contains the task model, deterministic and structured planners, allowlisted fixture tools, opt-in bounded workspace tools, orchestrator, SQLite persistence, bounded local workers, frontend, provider status API, and offline pytest coverage described below.
 
 The application is intentionally being built as a fresh implementation. Completed work is marked explicitly as it is added and verified.
 
@@ -21,6 +21,7 @@ The first implementation will prioritize:
 - Approval gates for sensitive actions.
 - Verifiable execution results and failure states.
 - An offline, deterministic test mode.
+- An optional provider mode that is account- and model-dependent, with explicit runtime verification.
 
 The core workflow must remain useful and testable without requiring a live AI provider, database server, or real destructive desktop action.
 
@@ -35,7 +36,10 @@ The project is being developed in OmniRush sessions in accordance with the Front
 Currently implemented:
 
 - Structured task and plan-step models with lifecycle, risk, approval, retry, result, and verification fields.
-- Deterministic planning for structured actions and fixture demo goals; no AI provider is required.
+- Deterministic planning for structured actions and fixture demo goals; no AI provider or key is required.
+- A standard-library Gemini REST client using the official `models.list` and `models:generateContent` shapes, bounded retries, timeouts, redacted errors, and lazy verification.
+- A JSON-only provider planner whose output is validated by the existing `PlanStep`, deterministic planner, tool registry, dependency checks, path policy, approval boundary, and registry risk floors.
+- `deterministic`, `auto`, and `gemini` modes. `auto` visibly falls back to deterministic planning when a key, exact model, supported `generateContent` method, canary, or provider response is unavailable.
 - An explicit allowlisted tool protocol and registry with input validation and bounded execution timeouts.
 - Safe in-memory fixture tools for success, approval, failure recovery, verification, and timeout testing.
 - A synchronous plan/policy/act/observe/verify/recover orchestrator with cancellation boundaries.
@@ -50,8 +54,8 @@ Currently implemented:
 
 Not yet implemented:
 
-- Desktop automation, unrestricted shell or filesystem actions, network calls, or external APIs.
-- Natural-language interpretation, AI-provider integration, authentication, or production deployment.
+- Desktop automation, unrestricted shell or filesystem actions, authentication, or production deployment.
+- A claim that any particular Gemini model is available to a specific account. Live access is checked only at runtime with the authenticated models endpoint and canary.
 
 ## Configured technology baseline
 
@@ -102,6 +106,7 @@ ARRAX_Agentic_AI/
 ├── src/arrax/
 │   ├── domain.py          # task, plan, risk, and status contracts
 │   ├── planner.py         # deterministic structured-goal planner
+│   ├── provider.py        # optional Gemini REST client and safe hybrid planner
 │   ├── tools.py           # allowlisted protocol, risk metadata, and safe fixtures
 │   ├── workspace.py       # opt-in root-scoped workspace tools and verifiers
 │   ├── storage.py         # SQLite repositories and schema
@@ -123,7 +128,7 @@ ARRAX_Agentic_AI/
 └── README.md
 ```
 
-The Flask API in `api.py` is the HTTP boundary around this core. The dashboard is served at `/` and its CSS/JavaScript assets are served below `/assets/`. Platform-specific adapters remain future layers.
+The Flask API in `api.py` is the HTTP boundary around this core. The dashboard is served at `/` and its CSS/JavaScript assets are served below `/assets/`. `provider.py` is the only provider boundary; platform-specific adapters remain future layers.
 
 ## Installation and setup
 
@@ -173,7 +178,10 @@ app = create_app(db_path="arrax.sqlite")
 # When finished, call app.extensions["arrax"]["shutdown"]().
 ```
 
-The factory does not bind a socket or create network clients. Its default mode is local and deterministic, and its default request body limit is 64 KiB. Tests can inject an existing `AgentCore` with `create_app(core=core)` and use the same shutdown hook to wait for bounded workers.
+The factory does not bind a socket or make provider network calls. Its default
+mode is local and deterministic, and its default request body limit is 64 KiB.
+Tests can inject an existing `AgentCore` with `create_app(core=core)` and use
+the same shutdown hook to wait for bounded workers.
 
 ### Optional workspace capability
 
@@ -215,6 +223,31 @@ snapshot, pauses at an explicit sensitive approval gate, writes
 file and marker. A report path that already exists is rejected unless the goal
 explicitly requests overwrite and the plan is approved.
 
+### Optional Gemini provider
+
+Provider configuration is parsed from `ARRAX_AI_MODE`, `GEMINI_API_KEY`, and
+`GEMINI_MODEL`. The safe default is `auto` with no key, which starts and stays
+in deterministic mode without making a network call. `deterministic` disables
+Gemini explicitly. `auto` uses Gemini only after a server-side check confirms
+the exact configured model is present in the authenticated `models` response,
+supports `generateContent`, and answers a minimal canary request. `gemini`
+requires that verification and returns a clear planning failure when it cannot
+be completed; it does not silently fall back.
+
+`gemini-3.8-flash` in `.env.example` is a candidate model name only. Model
+availability, account access, quotas, and pricing are account-dependent; this
+project does not claim free-tier access or access to any particular account.
+The API key is read and used only by the server-side REST client. It is never
+returned by status, task, event, exception, or frontend responses.
+
+Provider status is available without network I/O from `/api/health`,
+`/api/capabilities`, and `GET /api/provider/status`. The last endpoint accepts
+`?verify=1` for an explicit authenticated model-list and canary check. Normal
+health polling never verifies or calls Gemini. Status distinguishes configured,
+verified, deterministic fallback, missing-key, unavailable-model, rate-limit,
+timeout, network, and invalid-response states without returning the external
+response body.
+
 To run the local dashboard with Flask's development server, keep the binding
 local and use an explicit non-debug command:
 
@@ -249,9 +282,21 @@ Commands will be tested from a clean checkout before they are documented as work
 
 ## Environment variables
 
-The `.env.example` file is present as a safe template. The default mode consumes no workspace environment variable and stores no credentials or secrets.
+The `.env.example` file is present as a safe template. Its empty
+`GEMINI_API_KEY` keeps the default provider path deterministic. Never put a real
+key in Git or expose it to browser code.
 
-Future integrations will expose only documented variable names in `.env.example`. The optional `ARRAX_WORKSPACE_ROOT` value is intentionally blank in that template. Real API keys, passwords, tokens, personal data, and machine-specific paths must remain outside Git.
+The documented provider variables are:
+
+| Variable | Meaning |
+| --- | --- |
+| `ARRAX_AI_MODE` | `deterministic`, `auto`, or strict `gemini`; defaults to `auto`. |
+| `GEMINI_API_KEY` | Optional server-side key. Blank means deterministic fallback in `auto`. |
+| `GEMINI_MODEL` | Exact model name checked at runtime; the example is account-dependent. |
+| `ARRAX_WORKSPACE_ROOT` | Optional approved workspace root, intentionally blank by default. |
+
+Real API keys, passwords, tokens, personal data, and machine-specific paths
+must remain outside Git.
 
 ## Database and memory
 
@@ -290,6 +335,9 @@ python -m compileall -q src tests
 git diff --check
 ```
 
+Provider tests use fake transports and fake providers only. The automated test
+suite never performs a live Gemini request.
+
 The target is one offline command that exercises the complete safe test suite, including:
 
 - Request validation.
@@ -316,7 +364,7 @@ The implemented core security model is:
 - Keep local development binding restricted unless explicitly configured.
 - Do not log secrets or raw credentials.
 - Render user-generated content safely in the frontend.
-- Make external AI and desktop integrations optional and mockable.
+- Keep external AI optional, server-side, verified, bounded, and mockable.
 
 The workspace boundary adds these controls:
 
@@ -345,8 +393,11 @@ This project will not claim that a tool is successful until its completion can b
 The current known limitations are:
 
 - No production deployment is supported.
-- No AI provider is connected.
-- Natural-language goal interpretation is deferred; the dashboard selects one of the implemented deterministic scenarios.
+- No live provider access is assumed or required. A configured Gemini account is
+  checked only when explicitly verified or when `auto` first needs a provider
+  plan.
+- The dashboard preserves deterministic scenario inputs; it does not claim
+  arbitrary natural-language execution.
 - No desktop automation adapter is available.
 - Workspace access is opt-in and local-only; it does not provide arbitrary
   filesystem access, recursive unbounded reads, shell execution, network
@@ -370,7 +421,7 @@ These items will be removed from this list only after implementation and verific
 4. Add a small dashboard for task input, plan review, approval, and results. **Complete.**
 5. Add cancellation, timeouts, and result verification. **Complete.**
 6. Add an opt-in bounded workspace report flow with actual verifiers. **Complete.**
-7. Add optional AI planning behind strict schema and permission validation.
+7. Add optional AI planning behind strict schema and permission validation. **Complete.**
 8. Add optional platform adapters only after the core workflow is tested.
 9. Validate the project in a clean Docker environment with network access disabled for tests.
 

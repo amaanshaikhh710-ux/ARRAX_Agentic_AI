@@ -54,27 +54,30 @@ def wait_for_status(client, task_id: str, status: str, timeout: float = 2.0) -> 
 def test_health_and_capabilities_report_local_deterministic_mode(client):
     health = client.get("/api/health")
     assert health.status_code == 200
-    assert health.get_json() == {
-        "service": "arrax-api",
-        "status": "ready",
-        "ready": True,
-        "execution_mode": "deterministic_local",
-        "provider_mode": "none",
-    }
+    health_body = health.get_json()
+    assert health_body["service"] == "arrax-api"
+    assert health_body["status"] == "ready"
+    assert health_body["ready"] is True
+    assert health_body["execution_mode"] == "deterministic_local"
+    assert health_body["provider_mode"] == "deterministic"
+    assert health_body["provider_status"]["mode"] == "deterministic"
+    assert health_body["provider_status"]["verified"] is False
+    assert health_body["configured_model"] == "gemini-3.8-flash"
 
     capabilities = client.get("/api/capabilities")
     assert capabilities.status_code == 200
-    assert capabilities.get_json() == {
-        "tools": [
-            "fixture.approval",
-            "fixture.delay",
-            "fixture.fail_once",
-            "fixture.success",
-            "fixture.verify",
-        ],
-        "execution_mode": "deterministic_local",
-        "provider_mode": "none",
-    }
+    capabilities_body = capabilities.get_json()
+    assert capabilities_body["tools"] == [
+        "fixture.approval",
+        "fixture.delay",
+        "fixture.fail_once",
+        "fixture.success",
+        "fixture.verify",
+    ]
+    assert capabilities_body["execution_mode"] == "deterministic_local"
+    assert capabilities_body["provider_mode"] == "deterministic"
+    assert capabilities_body["provider_status"] == health_body["provider_status"]
+    assert capabilities_body["configured_model"] == health_body["configured_model"]
 
 
 def test_dashboard_and_assets_are_served_without_exposing_arbitrary_files(client):
@@ -108,6 +111,7 @@ def test_frontend_uses_real_api_paths_and_safe_dom_text_rendering():
     for path in (
         "/api/health",
         "/api/capabilities",
+        "/api/provider/status",
         "/api/tasks",
         "/api/tasks/",
         "/events",

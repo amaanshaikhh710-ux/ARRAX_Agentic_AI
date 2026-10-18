@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from .api import create_app
+from .provider import GeminiProvider, ProviderConfig, ProviderConfigError
 
 
 def main() -> None:
@@ -18,9 +19,15 @@ def main() -> None:
     if not 1 <= port <= 65535:
         raise SystemExit("ARRAX_PORT must be between 1 and 65535")
 
+    try:
+        provider_config = ProviderConfig.from_env()
+    except ProviderConfigError as exc:
+        raise SystemExit(str(exc)) from exc
+    provider = GeminiProvider(provider_config)
     app = create_app(
         db_path=os.getenv("ARRAX_DB_PATH", "arrax.sqlite"),
         workspace_root=os.getenv("ARRAX_WORKSPACE_ROOT"),
+        provider=provider,
     )
     app.run(host=host, port=port, debug=False, use_reloader=False)
 

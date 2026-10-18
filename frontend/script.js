@@ -225,13 +225,39 @@
     elements.apiNoticeText.textContent = message || "";
   }
 
+  function providerDisplay(status) {
+    if (status && status.verified === true && (status.mode === "gemini" || status.last_mode === "gemini")) {
+      return "Gemini verified";
+    }
+    if (status && status.configured_mode === "gemini") {
+      return "Gemini unverified";
+    }
+    if (status && status.configured === true && status.configured_mode === "auto") {
+      return "Auto / unverified";
+    }
+    return "Deterministic fallback";
+  }
+
+  function renderProviderLabels(status) {
+    const label = providerDisplay(status);
+    elements.providerMode.textContent = `Provider: ${label}`;
+    elements.capabilityProvider.textContent = label;
+    elements.modeChipLabel.textContent = label.toUpperCase();
+    elements.footerProviderStatus.textContent = `Provider status: ${label}`;
+  }
+
   function renderHealth(health) {
     const ready = health && health.ready === true && health.status === "ready";
+    const providerStatus = health?.provider_status || {};
     state.healthReady = ready;
     elements.healthStatus.textContent = ready ? "Ready" : "Unavailable";
     elements.healthDot.classList.toggle("is-unavailable", !ready);
     elements.executionMode.textContent = `Execution: ${displayValue(health?.execution_mode, "unavailable")}`;
-    elements.providerMode.textContent = `Provider: ${displayValue(health?.provider_mode, "unavailable")}`;
+    renderProviderLabels(providerStatus);
+    elements.capabilityProviderModel.textContent = displayValue(providerStatus.model, "unavailable");
+    elements.capabilityProviderVerification.textContent = providerStatus.verified === true
+      ? "Verified by backend"
+      : displayValue(providerStatus.message, "Not verified");
     if (ready) {
       setApiNotice("");
     }
@@ -242,7 +268,9 @@
     elements.healthStatus.textContent = "Unavailable";
     elements.healthDot.classList.add("is-unavailable");
     elements.executionMode.textContent = "Execution: unavailable";
-    elements.providerMode.textContent = "Provider: unavailable";
+    renderProviderLabels(null);
+    elements.capabilityProviderModel.textContent = "unavailable";
+    elements.capabilityProviderVerification.textContent = "unavailable";
     setApiNotice(error.message || "The API is unavailable.");
   }
 
@@ -264,7 +292,15 @@
     elements.toolList.replaceChildren();
     elements.toolCount.textContent = `${tools.length} registered`;
     elements.capabilityExecution.textContent = displayValue(capabilities?.execution_mode, "unavailable");
-    elements.capabilityProvider.textContent = displayValue(capabilities?.provider_mode, "unavailable");
+    const providerStatus = capabilities?.provider_status || {};
+    renderProviderLabels(providerStatus);
+    elements.capabilityProviderModel.textContent = displayValue(
+      capabilities?.configured_model || providerStatus.model,
+      "unavailable",
+    );
+    elements.capabilityProviderVerification.textContent = providerStatus.verified === true
+      ? "Verified by backend"
+      : displayValue(providerStatus.message, "Not verified");
     if (!tools.length) {
       addText(elements.toolList, "li", "tool-empty", "No registered tools reported by the API.");
       return;
@@ -284,7 +320,9 @@
     addText(elements.toolList, "li", "tool-empty", "Capabilities unavailable.");
     elements.toolCount.textContent = "Unavailable";
     elements.capabilityExecution.textContent = "unavailable";
-    elements.capabilityProvider.textContent = "unavailable";
+    renderProviderLabels(null);
+    elements.capabilityProviderModel.textContent = "unavailable";
+    elements.capabilityProviderVerification.textContent = "unavailable";
     if (!state.healthReady) {
       setApiNotice(error.message || "The API is unavailable.");
     }
@@ -294,6 +332,7 @@
     const results = await Promise.allSettled([
       requestJson("/api/health"),
       requestJson("/api/capabilities"),
+      requestJson("/api/provider/status"),
     ]);
     if (results[0].status === "fulfilled") {
       renderHealth(results[0].value);
@@ -304,6 +343,14 @@
       renderCapabilities(results[1].value);
     } else {
       renderCapabilitiesFailure(results[1].reason);
+    }
+    if (results[2].status === "fulfilled") {
+      const providerStatus = results[2].value || {};
+      renderProviderLabels(providerStatus);
+      elements.capabilityProviderModel.textContent = displayValue(providerStatus.model, "unavailable");
+      elements.capabilityProviderVerification.textContent = providerStatus.verified === true
+        ? "Verified by backend"
+        : displayValue(providerStatus.message, "Not verified");
     }
   }
 
@@ -625,6 +672,8 @@
     elements.healthStatus = byId("health-status");
     elements.executionMode = byId("execution-mode");
     elements.providerMode = byId("provider-mode");
+    elements.modeChipLabel = byId("mode-chip-label");
+    elements.footerProviderStatus = byId("footer-provider-status");
     elements.scenarioMode = byId("scenario-mode");
     elements.scenarioHelp = byId("scenario-help");
     elements.scenarioContext = byId("scenario-context");
@@ -650,6 +699,8 @@
     elements.toolCount = byId("tool-count");
     elements.capabilityExecution = byId("capability-execution");
     elements.capabilityProvider = byId("capability-provider");
+    elements.capabilityProviderModel = byId("capability-provider-model");
+    elements.capabilityProviderVerification = byId("capability-provider-verification");
   }
 
   function init() {
@@ -660,7 +711,11 @@
     elements.cancelTask.addEventListener("click", cancelTask);
     updateModeHelp();
     renderEmptyState();
-    renderCapabilities({ tools: [], execution_mode: "loading", provider_mode: "loading" });
+    renderCapabilities({
+      tools: [],
+      execution_mode: "loading",
+      provider_status: { message: "Checking backend provider status." },
+    });
     void loadSystemData();
   }
 

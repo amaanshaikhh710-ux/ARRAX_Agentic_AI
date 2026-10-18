@@ -1,9 +1,26 @@
-"""Public API for the deterministic ARRAX agent core."""
+"""Public API for the ARRAX deterministic core and optional provider boundary."""
 
 from .domain import DomainValidationError, PlanStep, RiskLevel, Task, TaskStatus
 from .api import create_app
 from .orchestrator import AgentCore, TaskNotFoundError, create_default_core
 from .planner import DeterministicPlanner, PlanningError
+from .provider import (
+    DEFAULT_GEMINI_MODEL,
+    GEMINI_API_ORIGIN,
+    GeminiPlanner,
+    GeminiProvider,
+    HybridPlanner,
+    HttpResponse,
+    ModelInfo,
+    ProviderConfig,
+    ProviderConfigError,
+    ProviderError,
+    ProviderMode,
+    ProviderPlanner,
+    ProviderStatus,
+    StructuredProviderPlanner,
+    UrllibTransport,
+)
 from .storage import Event, SQLiteStore
 from .tools import (
     ApprovalRequiredTool,
@@ -27,12 +44,25 @@ __all__ = [
     "create_app",
     "DelayTool",
     "DeterministicPlanner",
+    "DEFAULT_GEMINI_MODEL",
     "DomainValidationError",
     "Event",
     "FailOnceTool",
     "FixtureSuccessTool",
+    "GEMINI_API_ORIGIN",
+    "GeminiPlanner",
+    "GeminiProvider",
+    "HybridPlanner",
+    "HttpResponse",
+    "ModelInfo",
     "PlanStep",
     "PlanningError",
+    "ProviderConfig",
+    "ProviderConfigError",
+    "ProviderError",
+    "ProviderMode",
+    "ProviderPlanner",
+    "ProviderStatus",
     "RiskLevel",
     "REPORT_FILENAME",
     "REPORT_MARKER",
@@ -47,6 +77,8 @@ __all__ = [
     "ToolResult",
     "UnknownToolError",
     "VerifyTool",
+    "StructuredProviderPlanner",
+    "UrllibTransport",
     "create_default_core",
     "default_registry",
     "workspace_tools",
