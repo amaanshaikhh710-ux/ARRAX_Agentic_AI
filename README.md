@@ -179,18 +179,20 @@ PowerShell:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -c "from arrax import create_app; create_app(db_path='arrax.sqlite').run(host='127.0.0.1', port=5000, debug=False)"
+python -m arrax
 ```
 
 POSIX shells:
 
 ```sh
-PYTHONPATH=src python -c "from arrax import create_app; create_app(db_path='arrax.sqlite').run(host='127.0.0.1', port=5000, debug=False)"
+PYTHONPATH=src python -m arrax
 ```
 
 Open <http://127.0.0.1:5000/> after starting the command. The factory itself
-still does not bind a socket; the one-liner is the explicit local development
-entry point.
+still does not bind a socket; `python -m arrax` is the explicit local
+development entry point. It binds to `127.0.0.1` with debug and reloader mode
+disabled. Set `ARRAX_PORT`, `ARRAX_HOST`, or `ARRAX_DB_PATH` only when a local
+development override is needed.
 
 Future application layers can extend this section with exact commands for:
 
